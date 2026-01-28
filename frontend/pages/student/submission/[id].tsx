@@ -41,6 +41,14 @@ export default function StudentSubmissionView() {
         </div>
     );
 
+    const normalizeAnswer = (value: string | null | undefined) => {
+        if (!value) return '';
+        return value.replace(/^\[|\]$/g, '').replace(/"/g, '').trim();
+    };
+
+    const totalQuestions = submission.answers?.length || 0;
+    const correctCount = submission.answers?.filter((ans: any) => ans.is_correct === true).length || 0;
+
     return (
         <div className="min-h-screen bg-slate-50 py-12 px-4 sm:px-6 lg:px-8">
             <div className="max-w-4xl mx-auto space-y-6">
@@ -64,8 +72,8 @@ export default function StudentSubmissionView() {
                          
                          <h1 className="text-xl font-medium text-indigo-100 mb-2 relative z-10">{submission.paper_title}</h1>
                          <div className="text-6xl font-extrabold tracking-tight relative z-10 flex items-baseline gap-2">
-                             {submission.score !== null ? Math.round(submission.score) : "--"}
-                             <span className="text-2xl font-medium text-indigo-200">/ 100</span>
+                             {totalQuestions > 0 ? correctCount : "--"}
+                             <span className="text-2xl font-medium text-indigo-200">/ {totalQuestions || "--"}</span>
                          </div>
                          <div className="mt-4 flex items-center gap-2 text-indigo-200 text-sm relative z-10">
                               <Award size={16} /> Final Score
@@ -78,18 +86,22 @@ export default function StudentSubmissionView() {
                             <div className="flex gap-4 text-sm text-slate-500">
                                 <div className="flex items-center gap-1"><div className="w-2.5 h-2.5 rounded-full bg-green-500"></div> Correct</div>
                                 <div className="flex items-center gap-1"><div className="w-2.5 h-2.5 rounded-full bg-red-500"></div> Incorrect</div>
+                                <div className="flex items-center gap-1"><div className="w-2.5 h-2.5 rounded-full bg-amber-500"></div> Unanswered</div>
                             </div>
                         </div>
 
                         <div className="space-y-6">
                             {submission.answers.map((ans: any, index: number) => {
-                                const isCorrect = ans.is_correct;
+                                const formattedAnswer = normalizeAnswer(ans.answer);
+                                const hasAnswer = formattedAnswer.length > 0;
+                                const isCorrect = ans.is_correct === true;
+                                const isIncorrect = ans.is_correct === false && hasAnswer;
+                                const isUnanswered = !hasAnswer;
                                 const scoreColor = isCorrect === true ? 'text-green-600 bg-green-50 border-green-200' :
-                                                   isCorrect === false ? 'text-red-600 bg-red-50 border-red-200' :
+                                                   isIncorrect ? 'text-red-600 bg-red-50 border-red-200' :
                                                    'text-amber-600 bg-amber-50 border-amber-200';
                                 
-                                const Icon = isCorrect === true ? CheckCircle2 : 
-                                             isCorrect === false ? XCircle : HelpCircle;
+                                const Icon = isCorrect ? CheckCircle2 : isIncorrect ? XCircle : HelpCircle;
 
                                 return (
                                     <div key={index} className="border border-slate-200 rounded-xl p-6 hover:shadow-md transition-shadow bg-white">
@@ -102,7 +114,7 @@ export default function StudentSubmissionView() {
                                             </div>
                                             <div className={`flex items-center justify-center gap-1 px-3 py-1 rounded-full text-xs font-bold border w-[110px] flex-shrink-0 ${scoreColor}`}>
                                                 <Icon size={14} />
-                                                <span>{ans.score || 0} / {ans.max_score || 10} pts</span>
+                                                <span>{isCorrect ? 1 : 0} / 1 pt</span>
                                             </div>
                                         </div>
 
@@ -110,7 +122,7 @@ export default function StudentSubmissionView() {
                                             <div className="p-4 bg-slate-50 rounded-lg border border-slate-200">
                                                 <div className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-1">Your Answer</div>
                                                 <div className="text-slate-700 font-medium whitespace-pre-wrap">
-                                                    {(ans.answer || '').replace(/^\[|\]$/g, '').replace(/"/g, '') || <span className="text-slate-400 italic">No answer provided</span>}
+                                                    {formattedAnswer || <span className="text-slate-400 italic">No answer provided</span>}
                                                 </div>
                                             </div>
                                             
@@ -124,14 +136,14 @@ export default function StudentSubmissionView() {
                                             )} 
                                             */}
                                             
-                                            {ans.feedback && (
+                                            {(ans.feedback || isUnanswered) && (
                                                 <div className="mt-4 p-4 bg-blue-50 rounded-lg border border-blue-100 flex gap-3">
                                                     <div className="flex-shrink-0 mt-0.5 text-blue-500">
                                                         <HelpCircle size={18} />
                                                     </div>
                                                     <div>
                                                         <div className="text-xs font-semibold text-blue-600 uppercase tracking-wide mb-1">Feedback</div>
-                                                        <p className="text-sm text-blue-800">{ans.feedback}</p>
+                                                        <p className="text-sm text-blue-800">{ans.feedback || 'No answer submitted for this question.'}</p>
                                                     </div>
                                                 </div>
                                             )}

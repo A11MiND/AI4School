@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
-import { User, Camera, Save, Lock, BadgeCheck } from 'lucide-react';
+import { User as UserIcon, Camera, Save, Lock, CheckCircle } from 'lucide-react';
 
 interface ProfileSettingsProps {
   role: 'student' | 'teacher';
@@ -29,6 +29,7 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role }) => {
   });
 
   const getToken = () => localStorage.getItem(role === 'student' ? 'student_token' : 'teacher_token');
+
 
   const fetchProfile = async () => {
     const token = getToken();
@@ -131,7 +132,7 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role }) => {
             <div className={`mb-6 p-4 rounded-lg flex items-center gap-2 ${
               message.type === 'success' ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200'
             }`}>
-              {message.type === 'success' ? <BadgeCheck size={18} /> : <BadgeCheck size={18} className="rotate-180" />}
+              {message.type === 'success' ? <CheckCircle size={18} /> : <CheckCircle size={18} className="rotate-180" />}
               {message.text}
             </div>
           )}
@@ -143,7 +144,7 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role }) => {
                   <img src={`http://localhost:8000/${user.avatar_url}`} alt="Avatar" className="w-full h-full object-cover" />
                 ) : (
                   <div className="w-full h-full flex items-center justify-center text-slate-300">
-                    <User size={64} />
+                    <UserIcon size={64} />
                   </div>
                 )}
               </div>

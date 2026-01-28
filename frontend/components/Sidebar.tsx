@@ -12,8 +12,8 @@ import {
   Mic, 
   BarChart2, 
   GraduationCap,
-  Settings,
-  User,
+  Settings as SettingsIcon,
+  User as UserIcon,
   LogOut
 } from 'lucide-react';
 import axios from 'axios';
@@ -60,11 +60,11 @@ const Sidebar = () => {
     { name: 'Home', icon: Home, path: '/student/home' },
     { name: 'My Classes', icon: BookOpen, path: '/student/classroom' },
     { name: 'Reading Papers', icon: FileText, path: '/student/paper/reading' },
-    { name: 'Writing Papers', icon: PenTool, path: '/student/paper/writing' },
-    { name: 'Listening Papers', icon: Headphones, path: '/student/paper/listening' },
-    { name: 'Speaking Papers', icon: Mic, path: '/student/paper/speaking' },
+    { name: 'Writing Papers', icon: PenTool, path: '/student/paper/writing', wip: true },
+    { name: 'Listening Papers', icon: Headphones, path: '/student/paper/listening', wip: true },
+    { name: 'Speaking Papers', icon: Mic, path: '/student/paper/speaking', wip: true },
     { name: 'Reports', icon: BarChart2, path: '/student/report' },
-    { name: 'Settings', icon: Settings, path: '/student/settings' },
+    { name: 'Settings', icon: SettingsIcon, path: '/student/settings' },
   ] : [
     { name: 'Home', icon: Home, path: '/teacher/home' },
     { name: 'My Classes', icon: BookOpen, path: '/teacher/classes' },
@@ -74,7 +74,7 @@ const Sidebar = () => {
     { name: 'Listening', icon: Headphones, path: '/teacher/paper/listening', wip: true },
     { name: 'Speaking', icon: Mic, path: '/teacher/paper/speaking', wip: true },
     { name: 'Report', icon: BarChart2, path: '/teacher/analytics' }, 
-    { name: 'Settings', icon: Settings, path: '/teacher/settings' },
+    { name: 'Settings', icon: SettingsIcon, path: '/teacher/settings' },
   ];
 
   /* 
@@ -109,7 +109,7 @@ const Sidebar = () => {
     <div className="w-64 h-screen bg-white border-r border-slate-200 flex flex-col sticky top-0 shrink-0 font-sans">
       {/* Brand */}
       <div className="h-16 flex items-center px-6 border-b border-slate-100">
-        <Link href={`/${role}/home`} className="flex items-center gap-2 text-indigo-600 hover:opacity-80 transition">
+        <Link href={`/${role}/home`} className={`flex items-center gap-2 ${role === 'teacher' ? 'text-emerald-600' : 'text-indigo-600'} hover:opacity-80 transition`}>
             <GraduationCap size={28} />
             <span className="text-xl font-bold tracking-tight text-slate-900">AI4School</span>
         </Link>
@@ -123,6 +123,13 @@ const Sidebar = () => {
         {menuItems.map((item) => {
           const isActive = router.pathname === item.path;
           const Icon = item.icon;
+          
+          const activeClass = role === 'teacher' 
+            ? 'bg-emerald-50 text-emerald-700 shadow-sm ring-1 ring-emerald-200' 
+            : 'bg-indigo-50 text-indigo-700 shadow-sm ring-1 ring-indigo-200';
+            
+          const inactiveClass = 'text-slate-600 hover:bg-slate-50 hover:text-slate-900';
+          
           return (
             <Link 
               key={item.path}
@@ -130,18 +137,20 @@ const Sidebar = () => {
               onClick={(e) => {
                  if (item.wip) {
                      e.preventDefault();
-                     alert('Module coming soon!');
+                     // alert('Module coming soon!');
                  }
               }}
               className={`group flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 ${
-                isActive 
-                  ? 'bg-indigo-50 text-indigo-700 shadow-sm ring-1 ring-indigo-200' 
-                  : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+                isActive ? activeClass : inactiveClass
               } ${item.wip ? 'opacity-50 cursor-not-allowed' : ''}`}
             >
               <Icon 
                 size={18} 
-                className={`transition-colors ${isActive ? 'text-indigo-600' : 'text-slate-400 group-hover:text-slate-600'}`} 
+                className={`transition-colors ${
+                    isActive 
+                        ? (role === 'teacher' ? 'text-emerald-600' : 'text-indigo-600') 
+                        : 'text-slate-400 group-hover:text-slate-600'
+                }`} 
               />
               {item.name}
             </Link>
@@ -153,15 +162,19 @@ const Sidebar = () => {
       {user && (
         <div className="px-4 pb-2">
             <Link href={`/${role}/settings`} className="flex items-center gap-3 p-2 rounded-lg hover:bg-slate-100 transition-colors group">
-                <div className="w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center overflow-hidden border border-indigo-200 shrink-0">
+                <div className={`w-10 h-10 rounded-full flex items-center justify-center overflow-hidden border shrink-0 ${
+                    role === 'teacher' ? 'bg-emerald-100 border-emerald-200' : 'bg-indigo-100 border-indigo-200'
+                }`}>
                     {user.avatar_url ? (
                         <img src={`http://localhost:8000/${user.avatar_url}`} alt="Avatar" className="w-full h-full object-cover" />
                     ) : (
-                        <User size={20} className="text-indigo-600" />
+                        <UserIcon size={20} className={role === 'teacher' ? 'text-emerald-600' : 'text-indigo-600'} />
                     )}
                 </div>
                 <div className="flex-1 min-w-0 text-left">
-                    <p className="text-sm font-medium text-slate-900 truncate group-hover:text-indigo-700 transition-colors">
+                    <p className={`text-sm font-medium text-slate-900 truncate transition-colors ${
+                        role === 'teacher' ? 'group-hover:text-emerald-700' : 'group-hover:text-indigo-700'
+                    }`}>
                         {user.full_name || user.username}
                     </p>
                     <p className="text-xs text-slate-500 truncate">

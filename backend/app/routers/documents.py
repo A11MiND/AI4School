@@ -2,6 +2,9 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models.document import Document
+from ..models.document_visibility import DocumentClassVisibility
+from ..models.class_model import ClassModel
+from ..models.student_association import StudentClass
 from ..models.user import User
 from ..auth.jwt import get_current_user
 import io
@@ -33,6 +36,7 @@ class DocumentResponse(BaseModel):
     parent_id: Optional[int] = None
     uploaded_by: int
     created_at: Optional[datetime.datetime] = None  # Add created_at
+    visible: Optional[bool] = None
     
     class Config:
         orm_mode = True
@@ -79,6 +83,17 @@ def extract_text_from_file(file_content: bytes, filename: str) -> str:
     
     return text.strip()
 
+def normalize_extracted_text(text: str) -> str:
+    if not text:
+        return ""
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+    normalized = normalized.replace("-\n", "")
+    paragraphs = [p.strip() for p in normalized.split("\n\n") if p.strip()]
+    cleaned_paragraphs = []
+    for paragraph in paragraphs:
+        cleaned_paragraphs.append(" ".join(paragraph.splitlines()))
+    return "\n\n".join(cleaned_paragraphs).strip()
+
 @router.post("/create_folder")
 def create_folder(
     folder: FolderCreate, 
@@ -123,6 +138,7 @@ async def upload_document(
         f.write(content_bytes)
 
     extracted_text = extract_text_from_file(content_bytes, file.filename)
+    extracted_text = normalize_extracted_text(extracted_text)
     
     if not extracted_text:
         extracted_text = None
@@ -144,6 +160,7 @@ async def upload_document(
 def list_documents(
     parent_id: Optional[int] = None,
     uploaded_by: Optional[int] = None,
+    class_id: Optional[int] = None,
     db: Session = Depends(get_db), 
     current_user: User = Depends(get_current_user)
 ):
@@ -152,6 +169,8 @@ def list_documents(
     
     query = db.query(Document)
     
+    query = query.filter(Document.is_deleted == False)
+
     # Filter by uploader
     if current_user.role == "teacher":
         query = query.filter(Document.uploaded_by == current_user.id)
@@ -162,8 +181,36 @@ def list_documents(
         query = query.filter(Document.parent_id == parent_id)
     else:
         query = query.filter(Document.parent_id == None)
-        
-    return query.all()
+
+    if current_user.role == "student":
+        if class_id is None:
+            raise HTTPException(status_code=400, detail="class_id is required")
+        enrollment = db.query(StudentClass).filter(
+            StudentClass.user_id == current_user.id,
+            StudentClass.class_id == class_id
+        ).first()
+        if not enrollment:
+            raise HTTPException(status_code=403, detail="Not enrolled in class")
+
+        query = query.join(
+            DocumentClassVisibility,
+            DocumentClassVisibility.document_id == Document.id
+        ).filter(
+            DocumentClassVisibility.class_id == class_id,
+            DocumentClassVisibility.visible == True
+        )
+
+    docs = query.all()
+    if class_id is not None and current_user.role in ["teacher", "admin"]:
+        visibility_rows = db.query(DocumentClassVisibility).filter(
+            DocumentClassVisibility.class_id == class_id,
+            DocumentClassVisibility.document_id.in_([d.id for d in docs])
+        ).all()
+        visibility_map = {row.document_id: row.visible for row in visibility_rows}
+        for doc in docs:
+            doc.visible = visibility_map.get(doc.id, False)
+
+    return docs
 
 @router.get("/{document_id}")
 def get_document(document_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
@@ -172,16 +219,98 @@ def get_document(document_id: int, db: Session = Depends(get_db), current_user: 
          raise HTTPException(status_code=404, detail="Document not found")
      return doc
 
+def _collect_descendants(db: Session, root_id: int) -> list[Document]:
+    collected = []
+    stack = [root_id]
+    while stack:
+        current_id = stack.pop()
+        doc = db.query(Document).filter(Document.id == current_id).first()
+        if not doc:
+            continue
+        collected.append(doc)
+        child_ids = db.query(Document.id).filter(Document.parent_id == current_id).all()
+        stack.extend([cid for (cid,) in child_ids])
+    return collected
+
+
 @router.delete("/{document_id}")
-def delete_document(document_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def delete_document(
+    document_id: int,
+    hard: bool = False,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
     if current_user.role != "teacher" and current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Not authorized")
     doc = db.query(Document).filter(Document.id == document_id).first()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
-    db.delete(doc)
+    targets = _collect_descendants(db, doc.id)
+
+    if hard:
+        for target in targets:
+            if target.file_path and os.path.exists(target.file_path):
+                try:
+                    os.remove(target.file_path)
+                except Exception:
+                    pass
+        db.query(DocumentClassVisibility).filter(
+            DocumentClassVisibility.document_id.in_([t.id for t in targets])
+        ).delete(synchronize_session=False)
+        for target in targets:
+            db.delete(target)
+        db.commit()
+        return {"message": "Document deleted"}
+
+    now = datetime.datetime.now(datetime.timezone.utc)
+    for target in targets:
+        target.is_deleted = True
+        target.deleted_at = now
     db.commit()
     return {"message": "Document deleted"}
+
+
+class VisibilityUpdate(BaseModel):
+    class_id: int
+    visible: bool
+
+
+@router.post("/{document_id}/visibility")
+def set_document_visibility(
+    document_id: int,
+    payload: VisibilityUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    if current_user.role != "teacher" and current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    doc = db.query(Document).filter(Document.id == document_id, Document.is_deleted == False).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    class_row = db.query(ClassModel).filter(ClassModel.id == payload.class_id).first()
+    if not class_row:
+        raise HTTPException(status_code=404, detail="Class not found")
+    if current_user.role == "teacher" and class_row.teacher_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not your class")
+
+    visibility = db.query(DocumentClassVisibility).filter(
+        DocumentClassVisibility.document_id == document_id,
+        DocumentClassVisibility.class_id == payload.class_id
+    ).first()
+    if visibility:
+        visibility.visible = payload.visible
+    else:
+        visibility = DocumentClassVisibility(
+            document_id=document_id,
+            class_id=payload.class_id,
+            visible=payload.visible
+        )
+        db.add(visibility)
+
+    db.commit()
+    return {"message": "Visibility updated"}
 
 @router.get("/{doc_id}/download")
 def download_document(doc_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):

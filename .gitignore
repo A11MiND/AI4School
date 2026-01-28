@@ -5,6 +5,8 @@ yarn-error.log
 .next/
 dist/
 build/
+coverage/
+frontend/coverage/
 
 # Python
 __pycache__/
@@ -17,7 +19,18 @@ venv/
 .env
 .venv
 pip-log.txt
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
 
 # OS
 .DS_Store
 Thumbs.db
+
+# App data
+backend/uploads/
+backend/test.db
+
+# Docs build
+docs/_build/

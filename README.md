@@ -6,6 +6,11 @@
 ## Project Overview
 AI4School is a comprehensive educational platform designed to streamline the workflow between teachers and students. It features an automated exam content generation system using AI, a complete class management system, and an interactive student portal for taking exams and reviewing performance.
 
+### API Docs (Auto-generated)
+- **Swagger UI**: `http://localhost:8000/docs`
+- **ReDoc**: `http://localhost:8000/redoc`
+- **OpenAPI JSON**: `http://localhost:8000/openapi.json`
+
 ### Tech Stack
 - **Frontend**: Next.js (React), TypeScript, Tailwind CSS, Lucide React (Icons)
 - **Backend**: Python FastAPI, SQLAlchemy, DeepSeek V3 (AI Integration)

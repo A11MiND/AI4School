@@ -122,7 +122,7 @@ export default function MyPapers() {
                         <p className="text-gray-600 mt-2">Manage your exam papers and assign them to classes.</p>
                     </div>
                     <Link href="/teacher/create-paper">
-                        <button className="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 transition flex items-center gap-2">
+                        <button className="bg-emerald-600 text-white px-4 py-2 rounded-lg hover:bg-emerald-700 transition flex items-center gap-2">
                            <FileText size={18} /> Create New Paper
                         </button>
                     </Link>
@@ -149,7 +149,7 @@ export default function MyPapers() {
                                     <tr key={p.id} className="hover:bg-gray-50 transition">
                                         <td className="p-4 font-medium text-gray-900">
                                             <div className="flex items-center gap-3">
-                                                <div className="p-2 bg-indigo-50 text-indigo-600 rounded-lg">
+                                                <div className="p-2 bg-emerald-50 text-emerald-600 rounded-lg">
                                                     <FileText size={20} />
                                                 </div>
                                                 {p.title}
@@ -171,7 +171,7 @@ export default function MyPapers() {
                                                     <Users size={16} /> Assign
                                                 </button>
                                                 <Link href={`/teacher/create-paper?paperId=${p.id}`}>
-                                                    <button className="px-3 py-1.5 text-sm font-medium text-indigo-700 bg-indigo-50 rounded-md hover:bg-indigo-100 transition flex items-center gap-1">
+                                                    <button className="px-3 py-1.5 text-sm font-medium text-emerald-700 bg-emerald-50 rounded-md hover:bg-emerald-100 transition flex items-center gap-1">
                                                         <FileText size={16} /> Edit
                                                     </button>
                                                 </Link>
@@ -260,7 +260,7 @@ export default function MyPapers() {
                                     <div>
                                         <label className="block text-sm font-medium text-gray-700 mb-1">Select Class</label>
                                         <select 
-                                            className="w-full border-gray-300 rounded-lg shadow-sm focus:border-indigo-500 focus:ring-indigo-500 p-2.5 bg-white border"
+                                            className="w-full border-gray-300 rounded-lg shadow-sm focus:border-emerald-500 focus:ring-emerald-500 p-2.5 bg-white border"
                                             value={selectedClass} 
                                             onChange={e => setSelectedClass(e.target.value)}
                                         >
@@ -274,7 +274,7 @@ export default function MyPapers() {
                                             <label className="block text-sm font-medium text-gray-700 mb-1">Deadline (Optional)</label>
                                             <input 
                                                 type="datetime-local" 
-                                                className="w-full border-gray-300 rounded-lg shadow-sm focus:border-indigo-500 focus:ring-indigo-500 p-2 border"
+                                                className="w-full border-gray-300 rounded-lg shadow-sm focus:border-emerald-500 focus:ring-emerald-500 p-2 border"
                                                 value={deadline}
                                                 onChange={e => setDeadline(e.target.value)}
                                             />
@@ -284,7 +284,7 @@ export default function MyPapers() {
                                             <input 
                                                 type="number" 
                                                 placeholder="e.g. 60" 
-                                                className="w-full border-gray-300 rounded-lg shadow-sm focus:border-indigo-500 focus:ring-indigo-500 p-2 border"
+                                                className="w-full border-gray-300 rounded-lg shadow-sm focus:border-emerald-500 focus:ring-emerald-500 p-2 border"
                                                 value={duration}
                                                 onChange={e => setDuration(e.target.value)}
                                             />
@@ -297,7 +297,7 @@ export default function MyPapers() {
                                             type="number" 
                                             defaultValue={1} 
                                             min={1} 
-                                            className="w-full border-gray-300 rounded-lg shadow-sm focus:border-indigo-500 focus:ring-indigo-500 p-2 border"
+                                            className="w-full border-gray-300 rounded-lg shadow-sm focus:border-emerald-500 focus:ring-emerald-500 p-2 border"
                                             value={attempts}
                                             onChange={e => setAttempts(e.target.value)}
                                         />
@@ -319,7 +319,7 @@ export default function MyPapers() {
                                 className={`px-4 py-2 text-white font-medium rounded-lg transition flex items-center gap-2 ${
                                     !selectedClass 
                                     ? 'bg-gray-300 cursor-not-allowed' 
-                                    : 'bg-indigo-600 hover:bg-indigo-700 shadow-md'
+                                    : 'bg-emerald-600 hover:bg-emerald-700 shadow-md'
                                 }`}
                             >
                                 <Check size={18} /> Confirm Assignment

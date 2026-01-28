@@ -38,27 +38,22 @@ export default function StudentClassroom() {
     }
   };
 
-  const fetchDocuments = async (teacherId: number, folderId: number | null) => {
+    const fetchDocuments = async (_teacherId: number, folderId: number | null) => {
       try {
-          let url = `/documents/?uploaded_by=${teacherId}`;
-          if (folderId) {
-              url += `&parent_id=${folderId}`;
-          }
-          const res = await api.get(url);
+        const params: Record<string, number> = { class_id: selectedClassId as number };
+        if (folderId) {
+          params.parent_id = folderId;
+        }
+        const res = await api.get('/documents/', { params });
           setDocuments(res.data);
       } catch (err) {
           console.error("Failed to fetch documents", err);
       }
   };
 
-  const handleDownload = (doc: any) => {
-      // Assuming backend serves uploads at /uploads/filename
-      // Or we need a proper download endpoint. 
-      // For now, let's open the file path if served statically.
-      // doc.file_path is like "uploads/uuid_file.pdf"
-      const filename = doc.file_path.split('/').pop();
-      window.open(`http://localhost:8000/uploads/${filename}`, '_blank');
-  };
+    const handleDownload = (doc: any) => {
+      window.open(`http://localhost:8000/documents/${doc.id}/download`, '_blank');
+    };
 
   const selectedClass = classes.find(c => c.id === selectedClassId);
 

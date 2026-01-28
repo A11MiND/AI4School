@@ -65,17 +65,12 @@ export default function MyClasses() {
                         <h1 className="text-3xl font-bold text-gray-900">My Classes</h1>
                         <p className="text-gray-600 mt-2">Create classes and manage student enrollments.</p>
                     </div>
-                    <Link href="/teacher/dashboard">
-                        <button className="text-gray-500 hover:text-gray-700 font-medium transition">
-                            Back to Dashboard
-                        </button>
-                    </Link>
                 </div>
 
                 {/* Create Class Form */}
                 <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 mb-8">
                     <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-                        <Plus size={20} className="text-indigo-600" /> Create New Class
+                        <Plus size={20} className="text-emerald-600" /> Create New Class
                     </h2>
                     <form onSubmit={handleCreateClass} className="flex gap-4">
                         <input 
@@ -83,12 +78,12 @@ export default function MyClasses() {
                             value={newClassName} 
                             onChange={e => setNewClassName(e.target.value)} 
                             placeholder="Ex: Grade 10 English - Section A"
-                            className="flex-1 border-gray-300 rounded-lg shadow-sm focus:border-indigo-500 focus:ring-indigo-500 p-2.5 border"
+                            className="flex-1 border-gray-300 rounded-lg shadow-sm focus:border-emerald-500 focus:ring-emerald-500 p-2.5 border"
                         />
                         <button 
                             type="submit" 
                             disabled={!newClassName.trim() || creating}
-                            className="bg-indigo-600 text-white px-6 py-2.5 rounded-lg hover:bg-indigo-700 transition font-medium shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                            className="bg-emerald-600 text-white px-6 py-2.5 rounded-lg hover:bg-emerald-700 transition font-medium shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                             {creating ? 'Creating...' : 'Create Class'}
                         </button>

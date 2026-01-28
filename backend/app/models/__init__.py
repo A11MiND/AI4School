@@ -5,4 +5,5 @@ from .paper import Paper
 from .question import Question
 from .submission import Submission, Answer
 from .document import Document
+from .document_visibility import DocumentClassVisibility
 from .assignment import Assignment

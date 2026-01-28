@@ -21,11 +21,6 @@ export default function TeacherHome() {
           <h1 className="text-3xl font-bold text-gray-900">Teacher Dashboard</h1>
           <p className="text-gray-500 mt-1">Manage your classes and assignments.</p>
         </div>
-        <Link href="/teacher/create-paper">
-             <button className="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 flex items-center gap-2 shadow-sm transition">
-               <Plus size={16} /> Create Paper
-             </button>
-        </Link>
       </header>
 
       {/* Quick Actions Grid */}
@@ -102,11 +97,6 @@ export default function TeacherHome() {
 
         <div>
            {/* Placeholder for future calendar/timeline */}
-           <div className="bg-indigo-900 rounded-xl p-6 text-white text-center">
-               <h3 className="font-bold text-xl mb-2">Beta Version</h3>
-               <p className="opacity-80 text-sm mb-4">You are using the MVP version of AI4School.</p>
-               <div className="inline-block bg-white/20 px-3 py-1 rounded-full text-xs font-semibold">v1.0.0</div>
-           </div>
         </div>
       </div>
     </div>

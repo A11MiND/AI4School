@@ -1,4 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
+import json
+import re
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from pydantic import BaseModel
@@ -7,10 +9,11 @@ from ..models.paper import Paper
 from ..models.question import Question
 from ..models.user import User
 from ..auth.jwt import get_current_user
-from ..services.ai_generator import generate_dse_questions
+from ..services.ai_generator import generate_dse_questions, grade_open_answer
 from ..models.assignment import Assignment
 from ..models.student_association import StudentClass
 from ..models.submission import Submission, Answer
+from ..models.student_notebook import StudentNotebook
 
 router = APIRouter(
     prefix="/papers",
@@ -32,6 +35,14 @@ class PaperCreate(BaseModel):
 
 class GenerateRequest(BaseModel):
     article_content: str
+    difficulty: Optional[str] = None
+    assessment_objectives: Optional[List[str]] = None
+    question_formats: Optional[List[str]] = None
+    question_format_counts: Optional[dict] = None
+    marking_strictness: Optional[str] = None
+    text_type: Optional[str] = None
+    register: Optional[str] = None
+    cognitive_load: Optional[str] = None
 
 class AnswerSubmit(BaseModel):
     question_id: int
@@ -40,12 +51,93 @@ class AnswerSubmit(BaseModel):
 class PaperSubmit(BaseModel):
     answers: List[AnswerSubmit]
 
+OBJECTIVE_TYPES = {
+    "mcq", "tf", "true_false", "truefalse", "matching", "gap", "cloze",
+    "table", "objective"
+}
+
+OPEN_TYPES = {
+    "short", "short_answer", "long", "open", "summary", "sentence_completion",
+    "phrase_extraction"
+}
+
+def _normalize_text(text: Optional[str]) -> str:
+    if not text:
+        return ""
+    normalized = text.strip().lower()
+    normalized = re.sub(r"[^\w\s]", " ", normalized)
+
+    ordinal_map = {
+        "first": "1st",
+        "second": "2nd",
+        "third": "3rd",
+        "fourth": "4th",
+        "fifth": "5th",
+        "sixth": "6th",
+        "seventh": "7th",
+        "eighth": "8th",
+        "ninth": "9th",
+        "tenth": "10th",
+        "eleventh": "11th",
+        "twelfth": "12th",
+        "thirteenth": "13th",
+        "fourteenth": "14th",
+        "fifteenth": "15th",
+        "sixteenth": "16th",
+        "seventeenth": "17th",
+        "eighteenth": "18th",
+        "nineteenth": "19th",
+        "twentieth": "20th",
+        "thirtieth": "30th",
+        "fortieth": "40th",
+        "fiftieth": "50th",
+        "sixtieth": "60th",
+        "seventieth": "70th",
+        "eightieth": "80th",
+        "ninetieth": "90th",
+        "hundredth": "100th",
+    }
+
+    for word, replacement in ordinal_map.items():
+        normalized = re.sub(rf"\b{word}\b", replacement, normalized)
+
+    return " ".join(normalized.split())
+
+def _to_list(value: Optional[object]) -> List[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(v) for v in value]
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            if isinstance(parsed, list):
+                return [str(v) for v in parsed]
+            if isinstance(parsed, dict):
+                answer_value = parsed.get("answer")
+                if answer_value is not None:
+                    return [str(answer_value)]
+            return [str(parsed)]
+        except Exception:
+            return [value]
+    return [str(value)]
+
 @router.post("/generate")
 def generate_questions(request: GenerateRequest, current_user: User = Depends(get_current_user)):
     if current_user.role != "teacher" and current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Only teachers can generate papers")
     
-    questions_data = generate_dse_questions(request.article_content)
+    options = {
+        "difficulty": request.difficulty,
+        "assessment_objectives": request.assessment_objectives,
+        "question_formats": request.question_formats,
+        "question_format_counts": request.question_format_counts,
+        "marking_strictness": request.marking_strictness,
+        "text_type": request.text_type,
+        "register": request.register,
+        "cognitive_load": request.cognitive_load
+    }
+    questions_data = generate_dse_questions(request.article_content, options)
     return questions_data
 
 @router.post("/")
@@ -146,8 +238,23 @@ def delete_paper(paper_id: int, db: Session = Depends(get_db), current_user: Use
     if current_user.role != "admin" and paper.created_by != current_user.id:
         raise HTTPException(status_code=403, detail="Not your paper")
 
+    submission_rows = db.query(Submission.id).filter(Submission.paper_id == paper_id).all()
+    submission_ids = [row.id for row in submission_rows]
+
+    question_rows = db.query(Question.id).filter(Question.paper_id == paper_id).all()
+    question_ids = [row.id for row in question_rows]
+
+    if submission_ids:
+        db.query(Answer).filter(Answer.submission_id.in_(submission_ids)).delete(synchronize_session=False)
+        db.query(Submission).filter(Submission.id.in_(submission_ids)).delete(synchronize_session=False)
+
+    if question_ids:
+        db.query(StudentNotebook).filter(StudentNotebook.question_id.in_(question_ids)).delete(synchronize_session=False)
+
+    db.query(StudentNotebook).filter(StudentNotebook.original_paper_id == paper_id).delete(synchronize_session=False)
+    db.query(Assignment).filter(Assignment.paper_id == paper_id).delete(synchronize_session=False)
+    db.query(Question).filter(Question.paper_id == paper_id).delete(synchronize_session=False)
     db.delete(paper)
-    # Cascading deletes are handled by database configuration or ORM relationships.
     db.commit()
     return {"message": "Paper deleted"}
 
@@ -250,7 +357,7 @@ def submit_paper(paper_id: int, submit: PaperSubmit, db: Session = Depends(get_d
     db.commit()
     db.refresh(sub)
 
-    correct_count = 0
+    correct_count = 0.0
     total_q = 0
 
     # Save answers and calculate initial grade
@@ -263,17 +370,35 @@ def submit_paper(paper_id: int, submit: PaperSubmit, db: Session = Depends(get_d
         # Check correctness
         q = db.query(Question).filter(Question.id == ans.question_id).first()
         is_correct = False
+        score = 0.0
         if q:
             total_q += 1
-            # Basic string matching for auto-grading MCQs or short answers.
-            # Trims whitespace and compares case-insensitively.
-            # If Q is MCQ, correct_answer is expected to be a single letter like "A"
-            if q.correct_answer and ans.answer:
-                 if q.correct_answer.strip().lower() == ans.answer.strip().lower():
-                     is_correct = True
-                     correct_count += 1
-        
+            q_type = (q.question_type or "").strip().lower()
+
+            if q_type in OBJECTIVE_TYPES:
+                correct_values = _to_list(q.correct_answer)
+                student_value = _normalize_text(ans.answer)
+                normalized = [_normalize_text(v) for v in correct_values]
+                if student_value and student_value in normalized:
+                    is_correct = True
+                    score = 1.0
+                else:
+                    score = 0.0
+            else:
+                expected = q.correct_answer if q.correct_answer is not None else q.correct_answer_schema
+                score = grade_open_answer(
+                    question_text=q.question_text,
+                    expected_points=expected,
+                    student_answer=ans.answer or "",
+                    strictness="moderate"
+                )
+                if score >= 0.6:
+                    is_correct = True
+
+            correct_count += score
+
         new_ans.is_correct = is_correct
+        new_ans.score = score
         db.add(new_ans)
     
     # Update total score

@@ -12,6 +12,8 @@ class Document(Base):
     uploaded_by = Column(Integer, ForeignKey("users.id"))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     file_path = Column(String, nullable=True)
+    is_deleted = Column(Boolean, default=False)
+    deleted_at = Column(DateTime(timezone=True), nullable=True)
 
     # Folder support
     is_folder = Column(Boolean, default=False)
