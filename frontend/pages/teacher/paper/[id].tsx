@@ -50,7 +50,7 @@ export default function TeacherViewPaper() {
     return (
         <div style={{ padding: '2rem', maxWidth: '800px', margin: '0 auto' }}>
             <div style={{ marginBottom: '2rem' }}>
-                <Link href="/teacher/papers"><button>← Back to My Papers</button></Link>
+                <Link href="/teacher/paper/reading"><button>← Back to My Papers</button></Link>
             </div>
             
             <h1>{paper.title}</h1>

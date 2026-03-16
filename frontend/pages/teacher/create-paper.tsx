@@ -10,6 +10,114 @@ interface Question {
     correct_answer?: string;
 }
 
+const normalizeOptionText = (value: string) => value.replace(/^[A-Ga-g][\.|\)]\s+/, '').trim();
+
+const formatMatchingPairs = (value: any): string => {
+    if (value === null || value === undefined) return '';
+    if (typeof value === 'string') return value;
+    if (Array.isArray(value)) {
+        const pairs: string[] = [];
+        value.forEach((item) => {
+            if (typeof item === 'string') {
+                pairs.push(item);
+                return;
+            }
+            if (Array.isArray(item) && item.length >= 2) {
+                pairs.push(`${item[0]}->${item[1]}`);
+                return;
+            }
+            if (item && typeof item === 'object') {
+                const keys = Object.keys(item);
+                if (keys.length === 1) {
+                    const key = keys[0];
+                    pairs.push(`${key}->${item[key]}`);
+                    return;
+                }
+                const left = item.left ?? item.item ?? item.question ?? item.prompt;
+                const right = item.right ?? item.match ?? item.option ?? item.answer;
+                if (left !== undefined && right !== undefined) {
+                    pairs.push(`${left}->${right}`);
+                }
+            }
+        });
+        return pairs.join(', ');
+    }
+    if (value && typeof value === 'object') {
+        if (Array.isArray(value.pairs)) return formatMatchingPairs(value.pairs);
+        if (Array.isArray(value.matches)) return formatMatchingPairs(value.matches);
+        if (typeof value.answer === 'string') return value.answer;
+        return Object.entries(value)
+            .map(([left, right]) => `${left}->${right}`)
+            .join(', ');
+    }
+    return String(value);
+};
+
+const normalizeMcAnswer = (value: string): string => {
+    if (!value) return '';
+    const text = value.toString().trim().toUpperCase();
+    // Extract first letter A-D
+    const match = text.match(/^([A-D])/);
+    if (match) return match[1];
+    // Handle "Option A" or "Choice B" patterns
+    const optionMatch = text.match(/\b([A-D])\b/);
+    if (optionMatch) return optionMatch[1];
+    return value;
+};
+
+const normalizeTfAnswerValue = (value: string): string => {
+    if (!value) return '';
+    const text = value.toString().trim().toLowerCase();
+    if (['t', 'true', 'yes'].includes(text)) return 'T';
+    if (['f', 'false', 'no'].includes(text)) return 'F';
+    if (['ng', 'not given', 'not_given', 'notgiven', 'n/a', 'na'].includes(text)) return 'NG';
+    return value.trim().toUpperCase();
+};
+
+const normalizeCorrectAnswerValue = (value: any, questionType: string) => {
+    if (value === null || value === undefined) return '';
+    const normalizedType = (questionType || '').toLowerCase();
+    
+    // Handle MCQ - ensure single letter A/B/C/D
+    if (normalizedType === 'mc' || normalizedType === 'mcq') {
+        return normalizeMcAnswer(String(value));
+    }
+    
+    // Handle TF - ensure T/F/NG
+    if (normalizedType === 'tf' || normalizedType === 'tfng' || normalizedType === 'true_false') {
+        // If it's a JSON object with answer field, extract it
+        if (typeof value === 'string') {
+            try {
+                const parsed = JSON.parse(value);
+                if (parsed && typeof parsed === 'object' && parsed.answer) {
+                    return JSON.stringify({ ...parsed, answer: normalizeTfAnswerValue(parsed.answer) });
+                }
+            } catch (e) {
+                // Not JSON, normalize directly
+                return normalizeTfAnswerValue(value);
+            }
+        }
+        if (typeof value === 'object' && value.answer) {
+            return JSON.stringify({ ...value, answer: normalizeTfAnswerValue(value.answer) });
+        }
+        return normalizeTfAnswerValue(String(value));
+    }
+    
+    if (normalizedType === 'matching') {
+        if (typeof value === 'string') {
+            try {
+                const parsed = JSON.parse(value);
+                return formatMatchingPairs(parsed) || value;
+            } catch (error) {
+                return value;
+            }
+        }
+        return formatMatchingPairs(value) || JSON.stringify(value);
+    }
+    if (typeof value === 'string') return value;
+    return JSON.stringify(value);
+};
+
 export default function CreatePaper() {
     const router = useRouter();
     const { docId, paperId } = router.query;
@@ -31,14 +139,14 @@ export default function CreatePaper() {
         phrase_extraction: 0,
         sentence_completion: 0,
         summary: 0,
-        open_ended: 0,
-        table: 0
+        open_ended: 0
     });
     const [markingStrictness, setMarkingStrictness] = useState('moderate');
     const [textType, setTextType] = useState('expository');
     const [register, setRegister] = useState('formal');
     const [cognitiveLoad, setCognitiveLoad] = useState('multi-skill');
     const [step, setStep] = useState(1);
+    const [showAnswers, setShowAnswers] = useState(true); // Whether to show correct answers to students
 
     // Mode: 'create' (from doc) or 'edit' (existing paper)
     const isEditMode = !!paperId;
@@ -59,8 +167,14 @@ export default function CreatePaper() {
                 .then(res => {
                     const p = res.data;
                     setTitle(p.title);
-                    setArticle(p.article_content || ''); // Assuming backend returns this
-                    setQuestions(p.questions || []);
+                    setArticle(p.article_content || '');
+                    setShowAnswers(p.show_answers !== false); // Default to true if not set
+                    const normalizedQuestions = (p.questions || []).map((q: any) => ({
+                        ...q,
+                        correct_answer: normalizeCorrectAnswerValue(q.correct_answer, q.question_type),
+                        options: q.options?.map((opt: string) => normalizeOptionText(String(opt)))
+                    }));
+                    setQuestions(normalizedQuestions);
                     setStep(3);
                 })
                 .catch(err => alert("Failed to load paper"))
@@ -72,6 +186,8 @@ export default function CreatePaper() {
         if (!article) return alert("Please enter article text");
         setLoading(true);
         try {
+            const storedProvider = localStorage.getItem('ai_provider') || 'deepseek';
+            const storedModel = localStorage.getItem('ai_model') || '';
             const res = await api.post('/papers/generate', {
                 article_content: article,
                 difficulty,
@@ -80,27 +196,20 @@ export default function CreatePaper() {
                 question_format_counts: formatCounts,
                 marking_strictness: markingStrictness,
                 text_type: textType,
-                register,
-                cognitive_load: cognitiveLoad
+                text_register: register,
+                cognitive_load: cognitiveLoad,
+                ai_provider: storedProvider,
+                ai_model: storedModel
             });
             // Clean AI data
             const cleanQuestions = res.data.map((q: any) => {
-                let normalizedAnswer = q.correct_answer;
-                if (typeof q.correct_answer === 'string') {
-                    try {
-                        JSON.parse(q.correct_answer);
-                        normalizedAnswer = q.correct_answer;
-                    } catch (e) {
-                        normalizedAnswer = q.correct_answer.replace(/^\[|\]$/g, '').replace(/"/g, '');
-                    }
-                }
-
+                const normalizedAnswer = normalizeCorrectAnswerValue(q.correct_answer, q.question_type);
                 return {
                     ...q,
                     question_text: q.question_text.replace(/^\[.*?\]\s*/, ''),
                     correct_answer: normalizedAnswer,
                     options: q.options?.map((opt: string) =>
-                        opt.replace(/^\[|\]$/g, '').replace(/^"|"$/g, '')
+                        normalizeOptionText(opt.replace(/^\[|\]$/g, '').replace(/^"|"$/g, ''))
                     )
                 };
             });
@@ -121,7 +230,8 @@ export default function CreatePaper() {
             const payload = {
                 title,
                 article_content: article,
-                questions
+                questions,
+                show_answers: showAnswers
             };
 
             if (isEditMode) {
@@ -132,7 +242,7 @@ export default function CreatePaper() {
                 alert("Paper Published Successfully!");
             }
              
-             router.push('/teacher/papers'); // Redirect to papers list
+            router.push('/teacher/paper/reading'); // Redirect to papers list
         } catch (err) {
             alert(isEditMode ? "Update failed" : "Publish failed");
         } finally {
@@ -302,8 +412,7 @@ export default function CreatePaper() {
                                           { label: 'Phrase Extraction', value: 'phrase_extraction' },
                                           { label: 'Sentence Completion', value: 'sentence_completion' },
                                           { label: 'Summary', value: 'summary' },
-                                          { label: 'Open-ended', value: 'open_ended' },
-                                          { label: 'Table/Chart', value: 'table' }
+                                          { label: 'Open-ended', value: 'open_ended' }
                                       ].map(fmt => (
                                           <div key={`format-${fmt.value}`} className={`flex items-center justify-between gap-2 border rounded-lg px-3 py-2 ${
                                               (formatCounts[fmt.value] ?? 0) > 0
@@ -514,10 +623,11 @@ export default function CreatePaper() {
                                   {/* Answer UI by question type */}
                                   {(() => {
                                       const qType = (q.question_type || '').toLowerCase();
+                                      const normalizedCorrectAnswer = normalizeCorrectAnswerValue(q.correct_answer, qType);
                                       let parsedAnswer: any = null;
-                                      if (typeof q.correct_answer === 'string') {
+                                      if (typeof normalizedCorrectAnswer === 'string') {
                                           try {
-                                              parsedAnswer = JSON.parse(q.correct_answer);
+                                              parsedAnswer = JSON.parse(normalizedCorrectAnswer);
                                           } catch (e) {
                                               parsedAnswer = null;
                                           }
@@ -527,7 +637,7 @@ export default function CreatePaper() {
                                           ? parsedAnswer.join(', ')
                                           : (parsedAnswer && typeof parsedAnswer === 'object' && parsedAnswer.answer)
                                               ? String(parsedAnswer.answer)
-                                              : (q.correct_answer || '').replace(/^\[|\]$/g, '').replace(/"/g, '');
+                                              : (normalizedCorrectAnswer || '').replace(/^\[|\]$/g, '').replace(/"/g, '');
 
                                       const normalizeTfAnswer = (value: string) => {
                                           const normalized = (value || '').toString().trim().toLowerCase();
@@ -658,15 +768,12 @@ export default function CreatePaper() {
                                           );
                                       }
 
-                                      if (qType === 'table') {
+                                      if (qType === 'table' || qType === 'table_chart' || qType === 'chart') {
                                           return (
                                               <div className="mt-4 pt-4 border-t border-slate-50">
                                                   <div className="text-xs font-semibold text-slate-400 mb-2">Table/Chart Completion</div>
-                                                  <div className="border border-slate-200 rounded-lg p-3 bg-slate-50 text-slate-500 text-xs">
-                                                      Provide the table/chart blanks in the question text. Expected answers below.
-                                                  </div>
-                                                  <input
-                                                      className="mt-2 w-full text-sm bg-white border border-slate-200 rounded px-2 py-1"
+                                                  <textarea
+                                                      className="w-full text-sm bg-slate-50 border border-slate-200 rounded px-3 py-2 min-h-[96px]"
                                                       value={cleanAnswer}
                                                       onChange={e => updateQuestion(idx, 'correct_answer', e.target.value)}
                                                       placeholder="Expected answers / keywords"
@@ -692,16 +799,38 @@ export default function CreatePaper() {
                       )}
                  </div>
                  
-                 <div className="p-4 border-t border-slate-200 bg-white">
+                 <div className="p-4 border-t border-slate-200 bg-white space-y-4">
                       {step === 3 && (
-                          <button 
-                             onClick={handlePublish} 
-                             disabled={publishing || questions.length === 0}
-                             className="w-full py-3 flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-medium shadow-sm transition-all disabled:opacity-70 disabled:grayscale"
-                          >
-                              {publishing ? <Loader2 className="animate-spin" size={20} /> : <Save size={20} />}
-                              Save & Publish Paper
-                          </button>
+                          <>
+                              {/* Show Answers Toggle */}
+                              <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-200">
+                                  <div>
+                                      <div className="text-sm font-medium text-slate-700">Show Correct Answers</div>
+                                      <div className="text-xs text-slate-500">Allow students to see correct answers after submission</div>
+                                  </div>
+                                  <button
+                                      onClick={() => setShowAnswers(!showAnswers)}
+                                      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                                          showAnswers ? 'bg-green-500' : 'bg-slate-300'
+                                      }`}
+                                  >
+                                      <span
+                                          className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                                              showAnswers ? 'translate-x-6' : 'translate-x-1'
+                                          }`}
+                                      />
+                                  </button>
+                              </div>
+                              
+                              <button 
+                                 onClick={handlePublish} 
+                                 disabled={publishing || questions.length === 0}
+                                 className="w-full py-3 flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-medium shadow-sm transition-all disabled:opacity-70 disabled:grayscale"
+                              >
+                                  {publishing ? <Loader2 className="animate-spin" size={20} /> : <Save size={20} />}
+                                  Save & Publish Paper
+                              </button>
+                          </>
                       )}
                  </div>
             </div>

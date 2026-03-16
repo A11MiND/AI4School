@@ -125,7 +125,7 @@ describe('Page smoke tests', () => {
 
   it('renders teacher papers list', async () => {
     render(<TeacherPapers />);
-    await waitFor(() => expect(screen.getByText(/My Papers/i)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/My Reading Papers/i)).toBeInTheDocument());
   });
 
   it('renders teacher paper detail', async () => {
@@ -139,7 +139,7 @@ describe('Page smoke tests', () => {
     render(<TeacherListening />);
     render(<TeacherWriting />);
     render(<TeacherSpeaking />);
-    expect(screen.getAllByText(/Manage Reading Papers|Listening Papers|Writing Papers|Speaking Papers/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/My Papers|Listening Papers|My Writing Papers|Speaking Papers/i).length).toBeGreaterThan(0);
   });
 
   it('renders teacher create paper', () => {

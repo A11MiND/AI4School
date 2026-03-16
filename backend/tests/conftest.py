@@ -1,6 +1,7 @@
 import os
 
 os.environ["DATABASE_URL"] = "sqlite:///./test.db"
+os.environ.setdefault("JWT_SECRET_KEY", "test-secret-key-32-chars-minimum")
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine

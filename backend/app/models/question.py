@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, ForeignKey, Text
+from sqlalchemy import Column, Integer, String, ForeignKey
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import JSON
 from ..database import Base
@@ -26,6 +26,9 @@ class Question(Base):
     # New Field: Analytics tags
     skill_tag = Column(String, nullable=True) # e.g. "MainIdea", "Inference", "Vocabulary"
     difficulty = Column(Integer, default=1)   # 1 (Easy) to 5 (Hard)
+    writing_task_type = Column(String, nullable=True)  # task1|task2 for writing papers
+    prompt_asset_url = Column(String, nullable=True)   # optional image/pdf URL for prompt display
+    prompt_pool = Column(JSON, nullable=True)          # candidate prompts pool (used for task2)
 
     # Relationships
     paper = relationship("Paper", back_populates="questions")

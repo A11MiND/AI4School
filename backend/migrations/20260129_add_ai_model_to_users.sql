@@ -1,0 +1,2 @@
+ALTER TABLE users ADD COLUMN ai_provider VARCHAR;
+ALTER TABLE users ADD COLUMN ai_model VARCHAR;

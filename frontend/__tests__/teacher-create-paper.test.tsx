@@ -65,7 +65,7 @@ describe('Teacher create paper', () => {
     fireEvent.click(screen.getByRole('button', { name: /Save & Publish Paper/i }));
 
     await waitFor(() => expect(mockedApi.post).toHaveBeenCalledWith('/papers/', expect.any(Object)));
-    expect(push).toHaveBeenCalledWith('/teacher/papers');
+    expect(push).toHaveBeenCalledWith('/teacher/paper/reading');
   });
 
   it('fetches document when docId is provided', async () => {

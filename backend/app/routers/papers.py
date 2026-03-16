@@ -1,19 +1,26 @@
 from fastapi import APIRouter, Depends, HTTPException
+from datetime import datetime, timezone
 import json
+import os
 import re
+import random
+import hashlib
 from sqlalchemy.orm import Session
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from pydantic import BaseModel
 from ..database import get_db
 from ..models.paper import Paper
 from ..models.question import Question
 from ..models.user import User
+from ..models.document import Document
 from ..auth.jwt import get_current_user
 from ..services.ai_generator import generate_dse_questions, grade_open_answer
+from ..services.writing_grader import grade_writing_response
+from ..services.writing_metrics import compute_writing_metrics, metric_improvement_hints
+from ..services.writing_prompt_generator import generate_writing_prompts
 from ..models.assignment import Assignment
 from ..models.student_association import StudentClass
 from ..models.submission import Submission, Answer
-from ..models.student_notebook import StudentNotebook
 
 router = APIRouter(
     prefix="/papers",
@@ -32,6 +39,7 @@ class PaperCreate(BaseModel):
     article_content: str
     questions: List[QuestionBase]
     class_id: Optional[int] = None
+    show_answers: Optional[bool] = True  # Default to showing answers
 
 class GenerateRequest(BaseModel):
     article_content: str
@@ -41,8 +49,10 @@ class GenerateRequest(BaseModel):
     question_format_counts: Optional[dict] = None
     marking_strictness: Optional[str] = None
     text_type: Optional[str] = None
-    register: Optional[str] = None
+    text_register: Optional[str] = None
     cognitive_load: Optional[str] = None
+    ai_provider: Optional[str] = None
+    ai_model: Optional[str] = None
 
 class AnswerSubmit(BaseModel):
     question_id: int
@@ -50,16 +60,97 @@ class AnswerSubmit(BaseModel):
 
 class PaperSubmit(BaseModel):
     answers: List[AnswerSubmit]
+    assignment_id: Optional[int] = None
 
-OBJECTIVE_TYPES = {
-    "mcq", "tf", "true_false", "truefalse", "matching", "gap", "cloze",
-    "table", "objective"
+
+class WritingPaperCreate(BaseModel):
+    title: str
+    task1_prompt: Optional[str] = None
+    task2_prompt_pool: List[str] = []
+    prompt_asset_url: Optional[str] = None
+    show_answers: Optional[bool] = True
+    selected_task_mode: Optional[str] = "both"
+    source_document_id: Optional[int] = None
+    custom_requirements: Optional[str] = None
+    writing_config: Optional[Dict[str, Any]] = None
+
+
+class WritingPromptGenerateRequest(BaseModel):
+    selected_task_mode: str
+    source_document_id: Optional[int] = None
+    source_text: Optional[str] = None
+    custom_requirements: Optional[str] = None
+    ai_provider: Optional[str] = None
+    ai_model: Optional[str] = None
+
+
+class WritingResponseItem(BaseModel):
+    question_id: int
+    answer: str
+    selected_prompt: Optional[str] = None
+
+
+class WritingSubmitRequest(BaseModel):
+    assignment_id: Optional[int] = None
+    strictness: Optional[str] = "moderate"
+    responses: List[WritingResponseItem]
+
+# Strict objective types - require exact match
+STRICT_OBJECTIVE_TYPES = {
+    "mcq", "mc", "tf", "true_false", "truefalse", "matching", "table", "objective"
 }
+
+# Fill-in-the-blank types - use fuzzy matching
+FILL_BLANK_TYPES = {
+    "gap", "cloze", "sentence_completion", "phrase_extraction"
+}
+
+# For backward compatibility
+OBJECTIVE_TYPES = STRICT_OBJECTIVE_TYPES | FILL_BLANK_TYPES
 
 OPEN_TYPES = {
-    "short", "short_answer", "long", "open", "summary", "sentence_completion",
-    "phrase_extraction"
+    "short", "short_answer", "long", "open", "summary", "open_ended"
 }
+
+def _fuzzy_match_score(student: str, expected: str) -> float:
+    """Calculate fuzzy match score between student answer and expected answer."""
+    if not student or not expected:
+        return 0.0
+    
+    student_norm = student.strip().lower()
+    expected_norm = expected.strip().lower()
+    
+    # Exact match
+    if student_norm == expected_norm:
+        return 1.0
+    
+    # Check if student answer contains the expected answer or vice versa
+    if expected_norm in student_norm or student_norm in expected_norm:
+        return 0.9
+    
+    # Check for common word stems (simple stemming)
+    student_stem = student_norm.rstrip('s').rstrip('ed').rstrip('ing').rstrip('ly')
+    expected_stem = expected_norm.rstrip('s').rstrip('ed').rstrip('ing').rstrip('ly')
+    
+    if student_stem == expected_stem:
+        return 0.85
+    
+    if expected_stem in student_stem or student_stem in expected_stem:
+        return 0.7
+    
+    # Calculate character-level similarity (simple Levenshtein-like approach)
+    max_len = max(len(student_norm), len(expected_norm))
+    if max_len == 0:
+        return 0.0
+    
+    # Count matching characters
+    matches = sum(1 for a, b in zip(student_norm, expected_norm) if a == b)
+    similarity = matches / max_len
+    
+    if similarity >= 0.8:
+        return 0.6
+    
+    return 0.0
 
 def _normalize_text(text: Optional[str]) -> str:
     if not text:
@@ -122,6 +213,66 @@ def _to_list(value: Optional[object]) -> List[str]:
             return [value]
     return [str(value)]
 
+
+def _count_words(text: str) -> int:
+    return len(re.findall(r"[A-Za-z']+", text or ""))
+
+
+def _deterministic_prompt_pick(prompt_pool: List[str], user_id: int, paper_id: int, size: int = 4) -> List[str]:
+    cleaned = [p.strip() for p in prompt_pool if p and p.strip()]
+    if len(cleaned) <= size:
+        return cleaned
+    seed_input = f"{user_id}:{paper_id}".encode("utf-8")
+    seed = int(hashlib.sha256(seed_input).hexdigest(), 16) % (10**12)
+    rng = random.Random(seed)
+    return rng.sample(cleaned, size)
+
+
+def _normalize_assignment_deadline(deadline_value: Optional[datetime]) -> Optional[datetime]:
+    if deadline_value is None:
+        return None
+    if deadline_value.tzinfo is None:
+        return deadline_value.replace(tzinfo=timezone.utc)
+    return deadline_value
+
+
+def _validate_student_assignment_target(assign: Assignment, student_id: int, db: Session) -> None:
+    if assign.student_id is not None and assign.student_id != student_id:
+        raise HTTPException(status_code=403, detail="Assignment is not assigned to this student")
+
+    if assign.class_id is not None:
+        enrollment = db.query(StudentClass).filter(
+            StudentClass.user_id == student_id,
+            StudentClass.class_id == assign.class_id,
+        ).first()
+        if enrollment is None:
+            raise HTTPException(status_code=403, detail="Student is not in the assigned class")
+
+
+def _enforce_assignment_limits(assign: Assignment, student_id: int, db: Session) -> None:
+    deadline = _normalize_assignment_deadline(assign.deadline)
+    if deadline is not None and datetime.now(timezone.utc) > deadline:
+        raise HTTPException(status_code=400, detail="Submission deadline has passed")
+
+    max_attempts = assign.max_attempts or 1
+    current_attempts = db.query(Submission).filter(
+        Submission.assignment_id == assign.id,
+        Submission.student_id == student_id,
+    ).count()
+    if current_attempts >= max_attempts:
+        raise HTTPException(status_code=400, detail="Maximum attempts exceeded")
+
+
+def _aggregate_submission_score(answer_scores: List[Optional[float]]) -> float:
+    values = [float(v) for v in answer_scores if v is not None]
+    if not values:
+        return 0.0
+
+    # Accept both normalized (0..1) and raw rubric-style (0..10) manual edits.
+    normalized_scores = [v / 10.0 if v > 1.0 else v for v in values]
+    mean_value = sum(normalized_scores) / len(normalized_scores)
+    return max(0.0, min(100.0, mean_value * 100.0))
+
 @router.post("/generate")
 def generate_questions(request: GenerateRequest, current_user: User = Depends(get_current_user)):
     if current_user.role != "teacher" and current_user.role != "admin":
@@ -134,11 +285,19 @@ def generate_questions(request: GenerateRequest, current_user: User = Depends(ge
         "question_format_counts": request.question_format_counts,
         "marking_strictness": request.marking_strictness,
         "text_type": request.text_type,
-        "register": request.register,
-        "cognitive_load": request.cognitive_load
+        "register": request.text_register,
+        "cognitive_load": request.cognitive_load,
+        "ai_provider": request.ai_provider,
+        "ai_model": request.ai_model
     }
-    questions_data = generate_dse_questions(request.article_content, options)
-    return questions_data
+    try:
+        questions_data = generate_dse_questions(request.article_content, options)
+        if os.getenv("AI_DEBUG_LOG") == "1":
+            print("Generated questions:")
+            print(json.dumps(questions_data, ensure_ascii=False, indent=2))
+        return questions_data
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 @router.post("/")
 def create_paper(paper: PaperCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
@@ -153,7 +312,8 @@ def create_paper(paper: PaperCreate, db: Session = Depends(get_db), current_user
         title=paper.title,
         article_content=paper.article_content, 
         created_by=current_user.id,
-        class_id=paper.class_id if paper.class_id else None
+        class_id=paper.class_id if paper.class_id else None,
+        show_answers=paper.show_answers if paper.show_answers is not None else True
     ) 
     
     db.add(new_paper)
@@ -174,6 +334,332 @@ def create_paper(paper: PaperCreate, db: Session = Depends(get_db), current_user
     db.commit()
     return {"message": "Paper published successfully", "paper_id": new_paper.id}
 
+
+@router.post("/writing")
+def create_writing_paper(
+    payload: WritingPaperCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.role not in {"teacher", "admin"}:
+        raise HTTPException(status_code=403, detail="Only teachers can create writing papers")
+
+    selected_mode = (payload.selected_task_mode or "both").strip().lower()
+    if selected_mode not in {"task1", "task2", "both"}:
+        raise HTTPException(status_code=400, detail="Invalid selected_task_mode")
+
+    pool = [p.strip() for p in (payload.task2_prompt_pool or []) if p and p.strip()]
+    task1_prompt = (payload.task1_prompt or "").strip()
+
+    if selected_mode in {"task1", "both"} and not task1_prompt:
+        raise HTTPException(status_code=400, detail="Task 1 prompt is required for selected mode")
+    if selected_mode in {"task2", "both"} and len(pool) == 0:
+        raise HTTPException(status_code=400, detail="Task 2 prompt pool is required for selected mode")
+
+    paper_config = {
+        "mode": "writing",
+        "selected_task_mode": selected_mode,
+        "task1_enabled": selected_mode in {"task1", "both"},
+        "task2_enabled": selected_mode in {"task2", "both"},
+        "task2_pick_count": 4,
+        "source_document_id": payload.source_document_id,
+        "custom_requirements": payload.custom_requirements,
+        **(payload.writing_config or {}),
+    }
+
+    paper = Paper(
+        title=payload.title,
+        article_content=None,
+        created_by=current_user.id,
+        show_answers=payload.show_answers if payload.show_answers is not None else True,
+        paper_type="writing",
+        writing_config=paper_config,
+    )
+    db.add(paper)
+    db.commit()
+    db.refresh(paper)
+
+    questions: List[Question] = []
+    if selected_mode in {"task1", "both"}:
+        q1 = Question(
+            paper_id=paper.id,
+            question_text=task1_prompt,
+            question_type="writing_task1",
+            writing_task_type="task1",
+            prompt_asset_url=payload.prompt_asset_url,
+        )
+        questions.append(q1)
+        db.add(q1)
+
+    if selected_mode in {"task2", "both"}:
+        q2 = Question(
+            paper_id=paper.id,
+            question_text="Task 2: Choose ONE prompt and write your response.",
+            question_type="writing_task2",
+            writing_task_type="task2",
+            prompt_asset_url=payload.prompt_asset_url,
+            prompt_pool=pool,
+            options=pool,
+        )
+        questions.append(q2)
+        db.add(q2)
+
+    db.commit()
+
+    return {
+        "message": "Writing paper created",
+        "paper_id": paper.id,
+        "question_ids": [q.id for q in questions],
+    }
+
+
+@router.post("/writing/generate-prompts")
+def generate_writing_prompt_bundle(
+    payload: WritingPromptGenerateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.role not in {"teacher", "admin"}:
+        raise HTTPException(status_code=403, detail="Only teachers can generate writing prompts")
+
+    source_text = (payload.source_text or "").strip()
+    if payload.source_document_id is not None:
+        doc = db.query(Document).filter(Document.id == payload.source_document_id).first()
+        if not doc or doc.is_folder:
+            raise HTTPException(status_code=404, detail="Document not found")
+        source_text = (doc.content or "").strip() or source_text
+
+    options = {
+        "ai_provider": payload.ai_provider,
+        "ai_model": payload.ai_model,
+    }
+    try:
+        generated = generate_writing_prompts(
+            task_mode=payload.selected_task_mode,
+            source_text=source_text,
+            custom_requirements=payload.custom_requirements,
+            options=options,
+        )
+        return generated
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.put("/writing/{paper_id}")
+def update_writing_paper(
+    paper_id: int,
+    payload: WritingPaperCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.role not in {"teacher", "admin"}:
+        raise HTTPException(status_code=403, detail="Only teachers can update writing papers")
+
+    paper = db.query(Paper).filter(Paper.id == paper_id).first()
+    if not paper:
+        raise HTTPException(status_code=404, detail="Paper not found")
+    if paper.paper_type != "writing":
+        raise HTTPException(status_code=400, detail="Not a writing paper")
+    if current_user.role != "admin" and paper.created_by != current_user.id:
+        raise HTTPException(status_code=403, detail="Not your paper")
+
+    selected_mode = (payload.selected_task_mode or "both").strip().lower()
+    if selected_mode not in {"task1", "task2", "both"}:
+        raise HTTPException(status_code=400, detail="Invalid selected_task_mode")
+
+    pool = [p.strip() for p in (payload.task2_prompt_pool or []) if p and p.strip()]
+    task1_prompt = (payload.task1_prompt or "").strip()
+    if selected_mode in {"task1", "both"} and not task1_prompt:
+        raise HTTPException(status_code=400, detail="Task 1 prompt is required for selected mode")
+    if selected_mode in {"task2", "both"} and len(pool) == 0:
+        raise HTTPException(status_code=400, detail="Task 2 prompt pool is required for selected mode")
+
+    paper.title = payload.title
+    paper.show_answers = payload.show_answers if payload.show_answers is not None else paper.show_answers
+    paper.writing_config = {
+        "mode": "writing",
+        "selected_task_mode": selected_mode,
+        "task1_enabled": selected_mode in {"task1", "both"},
+        "task2_enabled": selected_mode in {"task2", "both"},
+        "task2_pick_count": 4,
+        "source_document_id": payload.source_document_id,
+        "custom_requirements": payload.custom_requirements,
+        **(payload.writing_config or {}),
+    }
+
+    task1_q = db.query(Question).filter(Question.paper_id == paper_id, Question.writing_task_type == "task1").first()
+    task2_q = db.query(Question).filter(Question.paper_id == paper_id, Question.writing_task_type == "task2").first()
+
+    if selected_mode in {"task1", "both"}:
+        if task1_q:
+            task1_q.question_text = task1_prompt
+            task1_q.prompt_asset_url = payload.prompt_asset_url
+            task1_q.question_type = "writing_task1"
+        else:
+            db.add(Question(
+                paper_id=paper_id,
+                question_text=task1_prompt,
+                question_type="writing_task1",
+                writing_task_type="task1",
+                prompt_asset_url=payload.prompt_asset_url,
+            ))
+    elif task1_q:
+        db.delete(task1_q)
+
+    if selected_mode in {"task2", "both"}:
+        if task2_q:
+            task2_q.question_text = "Task 2: Choose ONE prompt and write your response."
+            task2_q.question_type = "writing_task2"
+            task2_q.prompt_asset_url = payload.prompt_asset_url
+            task2_q.prompt_pool = pool
+            task2_q.options = pool
+        else:
+            db.add(Question(
+                paper_id=paper_id,
+                question_text="Task 2: Choose ONE prompt and write your response.",
+                question_type="writing_task2",
+                writing_task_type="task2",
+                prompt_asset_url=payload.prompt_asset_url,
+                prompt_pool=pool,
+                options=pool,
+            ))
+    elif task2_q:
+        db.delete(task2_q)
+
+    db.commit()
+    return {"message": "Writing paper updated", "paper_id": paper.id}
+
+
+@router.get("/writing/{paper_id}")
+def get_writing_paper(
+    paper_id: int,
+    assignment_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    paper = db.query(Paper).filter(Paper.id == paper_id).first()
+    if not paper:
+        raise HTTPException(status_code=404, detail="Paper not found")
+    if paper.paper_type != "writing":
+        raise HTTPException(status_code=400, detail="Not a writing paper")
+
+    questions = db.query(Question).filter(Question.paper_id == paper_id).all()
+    out_questions = []
+    for q in questions:
+        item: Dict[str, Any] = {
+            "id": q.id,
+            "question_text": q.question_text,
+            "question_type": q.question_type,
+            "writing_task_type": q.writing_task_type,
+            "prompt_asset_url": q.prompt_asset_url,
+        }
+        if q.writing_task_type == "task2":
+            item["prompt_options"] = _deterministic_prompt_pick(q.prompt_pool or q.options or [], current_user.id, paper_id, 4)
+        out_questions.append(item)
+
+    return {
+        "id": paper.id,
+        "title": paper.title,
+        "paper_type": paper.paper_type,
+        "show_answers": paper.show_answers,
+        "writing_config": paper.writing_config or {},
+        "questions": out_questions,
+        "assignment_id": assignment_id,
+    }
+
+
+@router.post("/writing/{paper_id}/submit")
+def submit_writing_paper(
+    paper_id: int,
+    submit: WritingSubmitRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    paper = db.query(Paper).filter(Paper.id == paper_id).first()
+    if not paper:
+        raise HTTPException(status_code=404, detail="Paper not found")
+    if paper.paper_type != "writing":
+        raise HTTPException(status_code=400, detail="Not a writing paper")
+
+    assignment = None
+    if submit.assignment_id is not None:
+        assignment = db.query(Assignment).filter(Assignment.id == submit.assignment_id).first()
+        assign = assignment
+        if not assign or assign.paper_id != paper_id:
+            raise HTTPException(status_code=400, detail="Invalid assignment")
+        _validate_student_assignment_target(assign, current_user.id, db)
+        _enforce_assignment_limits(assign, current_user.id, db)
+
+    submission = Submission(
+        student_id=current_user.id,
+        paper_id=paper_id,
+        assignment_id=submit.assignment_id,
+    )
+    db.add(submission)
+    db.commit()
+    db.refresh(submission)
+
+    question_map = {
+        q.id: q for q in db.query(Question).filter(Question.paper_id == paper_id).all()
+    }
+
+    total = 0.0
+    count = 0
+    for r in submit.responses:
+        q = question_map.get(r.question_id)
+        if not q:
+            continue
+
+        prompt_text = q.question_text
+        if r.selected_prompt:
+            prompt_text = f"{q.question_text}\n\nChosen prompt: {r.selected_prompt}"
+
+        rubric = grade_writing_response(
+            prompt_text=prompt_text,
+            student_text=r.answer or "",
+            rubric_context=None,
+            strictness=submit.strictness or "moderate",
+        )
+
+        metrics = compute_writing_metrics(r.answer or "")
+        hints = metric_improvement_hints(metrics)
+
+        overall_band = float(rubric.get("overall", 0.0))
+        normalized = max(0.0, min(1.0, overall_band / 7.0))
+
+        ans = Answer(
+            submission_id=submission.id,
+            question_id=r.question_id,
+            answer=r.answer,
+            selected_prompt=r.selected_prompt,
+            word_count=_count_words(r.answer or ""),
+            is_correct=normalized >= 0.6,
+            score=normalized,
+            rubric_scores={
+                "content": rubric.get("content", 0.0),
+                "language": rubric.get("language", 0.0),
+                "organization": rubric.get("organization", 0.0),
+                "overall": overall_band,
+                "summary_feedback": rubric.get("summary_feedback", ""),
+                "improvement": rubric.get("improvement", {}),
+            },
+            writing_metrics={**metrics, "hints": hints},
+            sentence_feedback=rubric.get("sentence_feedback", []),
+        )
+        db.add(ans)
+
+        total += normalized
+        count += 1
+
+    submission.score = (total / count) * 100 if count else 0.0
+    db.commit()
+
+    return {
+        "message": "Writing submitted successfully",
+        "submission_id": submission.id,
+        "score": submission.score,
+    }
+
 @router.get("/")
 def list_papers(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     # Students see papers assigned to them OR their classes
@@ -190,7 +676,7 @@ def list_papers(db: Session = Depends(get_db), current_user: User = Depends(get_
              query = query.filter(Assignment.student_id == current_user.id)
              
         assignments = query.all()
-        paper_ids = [a.paper_id for a in assignments]
+        paper_ids = list({a.paper_id for a in assignments})
         
         if not paper_ids:
             return []
@@ -198,23 +684,34 @@ def list_papers(db: Session = Depends(get_db), current_user: User = Depends(get_
         # 3. Return papers with assignment stats
         # return db.query(Paper).filter(Paper.id.in_(paper_ids)).all()
         
+        papers = db.query(Paper).filter(Paper.id.in_(paper_ids)).all()
+        paper_map = {p.id: p for p in papers}
+
+        assignment_ids = [a.id for a in assignments]
+        submissions = db.query(Submission).filter(
+            Submission.student_id == current_user.id,
+            Submission.assignment_id.in_(assignment_ids),
+        ).order_by(Submission.submitted_at.desc()).all()
+
+        by_assignment: Dict[int, List[Submission]] = {}
+        for sub in submissions:
+            if sub.assignment_id is None:
+                continue
+            by_assignment.setdefault(sub.assignment_id, []).append(sub)
+
         results = []
         for assign in assignments:
-            paper = db.query(Paper).filter(Paper.id == assign.paper_id).first()
-            if not paper: continue
-            
-            # Find submissions for this paper/student
-            subs = db.query(Submission).filter(
-                Submission.student_id == current_user.id,
-                Submission.paper_id == paper.id
-            ).order_by(Submission.submitted_at.desc()).all()
-            
-            best_score = max([s.score for s in subs if s.score is not None], default=None)
+            paper = paper_map.get(assign.paper_id)
+            if not paper:
+                continue
+
+            subs = by_assignment.get(assign.id, [])
             latest_sub = subs[0] if subs else None
-            
+
             results.append({
-                "id": paper.id, 
+                "id": paper.id,
                 "title": paper.title,
+                "paper_type": paper.paper_type or "reading",
                 "assignment_id": assign.id,
                 "deadline": assign.deadline,
                 "duration_minutes": assign.duration_minutes,
@@ -222,7 +719,7 @@ def list_papers(db: Session = Depends(get_db), current_user: User = Depends(get_
                 "submitted_count": len(subs),
                 "latest_score": latest_sub.score if latest_sub else None,
                 "latest_submission_id": latest_sub.id if latest_sub else None,
-                "status": "completed" if latest_sub else "pending" # simplified status
+                "status": "completed" if latest_sub else "pending"
             })
         return results
         
@@ -248,18 +745,47 @@ def delete_paper(paper_id: int, db: Session = Depends(get_db), current_user: Use
         db.query(Answer).filter(Answer.submission_id.in_(submission_ids)).delete(synchronize_session=False)
         db.query(Submission).filter(Submission.id.in_(submission_ids)).delete(synchronize_session=False)
 
-    if question_ids:
-        db.query(StudentNotebook).filter(StudentNotebook.question_id.in_(question_ids)).delete(synchronize_session=False)
-
-    db.query(StudentNotebook).filter(StudentNotebook.original_paper_id == paper_id).delete(synchronize_session=False)
     db.query(Assignment).filter(Assignment.paper_id == paper_id).delete(synchronize_session=False)
     db.query(Question).filter(Question.paper_id == paper_id).delete(synchronize_session=False)
     db.delete(paper)
     db.commit()
     return {"message": "Paper deleted"}
 
+class PaperUpdate(BaseModel):
+    title: Optional[str] = None
+    article_content: Optional[str] = None
+    show_answers: Optional[bool] = None
+
+@router.put("/{paper_id}")
+def update_paper(paper_id: int, update: PaperUpdate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    if current_user.role != "teacher" and current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Only teachers can update papers")
+    
+    paper = db.query(Paper).filter(Paper.id == paper_id).first()
+    if not paper:
+        raise HTTPException(status_code=404, detail="Paper not found")
+    
+    if current_user.role != "admin" and paper.created_by != current_user.id:
+        raise HTTPException(status_code=403, detail="Not your paper")
+    
+    if update.title is not None:
+        paper.title = update.title
+    if update.article_content is not None:
+        paper.article_content = update.article_content
+    if update.show_answers is not None:
+        paper.show_answers = update.show_answers
+    
+    db.commit()
+    db.refresh(paper)
+    return {"message": "Paper updated", "paper": {"id": paper.id, "title": paper.title, "show_answers": paper.show_answers}}
+
 @router.get("/{paper_id}")
-def get_paper(paper_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def get_paper(
+    paper_id: int,
+    assignment_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
     paper = db.query(Paper).filter(Paper.id == paper_id).first()
     if not paper:
          raise HTTPException(status_code=404, detail="Paper not found")
@@ -272,11 +798,16 @@ def get_paper(paper_id: int, db: Session = Depends(get_db), current_user: User =
     # (Allow if role is student OR if a submission exists for this user)
     
     # 1. Try to find assignment (Student/General)
-    assign = db.query(Assignment).filter(Assignment.paper_id == paper_id, Assignment.student_id == current_user.id).first()
+    assign = None
+    if assignment_id is not None:
+        assign = db.query(Assignment).filter(Assignment.id == assignment_id, Assignment.paper_id == paper_id).first()
     if not assign:
-         student_classes = db.query(StudentClass).filter(StudentClass.user_id == current_user.id).all()
-         class_ids = [sc.class_id for sc in student_classes]
-         assign = db.query(Assignment).filter(Assignment.paper_id == paper_id, Assignment.class_id.in_(class_ids)).first()
+        assign = db.query(Assignment).filter(Assignment.paper_id == paper_id, Assignment.student_id == current_user.id).first()
+    if not assign:
+        student_classes = db.query(StudentClass).filter(StudentClass.user_id == current_user.id).all()
+        class_ids = [sc.class_id for sc in student_classes]
+        if class_ids:
+            assign = db.query(Assignment).filter(Assignment.paper_id == paper_id, Assignment.class_id.in_(class_ids)).first()
     
     if assign:
         assignment_info = {
@@ -286,7 +817,19 @@ def get_paper(paper_id: int, db: Session = Depends(get_db), current_user: User =
         }
     
     # 2. Check existing submission
-    submissions = db.query(Submission).filter(Submission.paper_id == paper_id, Submission.student_id == current_user.id).all()
+    submissions_query = db.query(Submission).filter(
+        Submission.paper_id == paper_id,
+        Submission.student_id == current_user.id
+    )
+    submissions = []
+    if assignment_id is not None:
+        submissions = submissions_query.filter(Submission.assignment_id == assignment_id).all()
+    elif assign and assign.id:
+        submissions = submissions_query.filter(Submission.assignment_id == assign.id).all()
+        if not submissions:
+            submissions = submissions_query.all()
+    else:
+        submissions = submissions_query.all()
     if submissions:
         # Get latest
         last_sub = submissions[-1]
@@ -302,11 +845,27 @@ def get_paper(paper_id: int, db: Session = Depends(get_db), current_user: User =
     # Fetch questions
     questions = db.query(Question).filter(Question.paper_id == paper_id).all()
     
+    # For students, hide correct answers if show_answers is False
+    questions_data = []
+    is_student = current_user.role == "student"
+    should_hide_answers = is_student and not paper.show_answers
+    
+    for q in questions:
+        q_data = {
+            "id": q.id,
+            "question_text": q.question_text,
+            "question_type": q.question_type,
+            "options": q.options,
+            "correct_answer": None if should_hide_answers else q.correct_answer
+        }
+        questions_data.append(q_data)
+    
     return {
         "id": paper.id,
         "title": paper.title,
         "article_content": paper.article_content,
-        "questions": questions,
+        "show_answers": paper.show_answers,
+        "questions": questions_data,
         "assignment": assignment_info,
         "submission": submission_info
     }
@@ -347,11 +906,21 @@ def update_question(question_id: int, question: QuestionUpdate, db: Session = De
 @router.post("/{paper_id}/submit")
 def submit_paper(paper_id: int, submit: PaperSubmit, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     # Calculate limits (simplified logic, ideally should re-check assignment)
+
+    assignment = None
+    if submit.assignment_id is not None:
+        assignment = db.query(Assignment).filter(Assignment.id == submit.assignment_id).first()
+        assign = assignment
+        if not assign or assign.paper_id != paper_id:
+            raise HTTPException(status_code=400, detail="Invalid assignment")
+        _validate_student_assignment_target(assign, current_user.id, db)
+        _enforce_assignment_limits(assign, current_user.id, db)
     
     # Create submission
     sub = Submission(
         student_id=current_user.id,
-        paper_id=paper_id
+        paper_id=paper_id,
+        assignment_id=submit.assignment_id
     )
     db.add(sub)
     db.commit()
@@ -375,7 +944,8 @@ def submit_paper(paper_id: int, submit: PaperSubmit, db: Session = Depends(get_d
             total_q += 1
             q_type = (q.question_type or "").strip().lower()
 
-            if q_type in OBJECTIVE_TYPES:
+            if q_type in STRICT_OBJECTIVE_TYPES:
+                # Strict matching for MCQ, TF, Matching
                 correct_values = _to_list(q.correct_answer)
                 student_value = _normalize_text(ans.answer)
                 normalized = [_normalize_text(v) for v in correct_values]
@@ -384,7 +954,18 @@ def submit_paper(paper_id: int, submit: PaperSubmit, db: Session = Depends(get_d
                     score = 1.0
                 else:
                     score = 0.0
+            elif q_type in FILL_BLANK_TYPES:
+                # Fuzzy matching for gap/fill-in-blank questions
+                correct_values = _to_list(q.correct_answer)
+                student_answer = (ans.answer or "").strip()
+                best_score = 0.0
+                for expected in correct_values:
+                    match_score = _fuzzy_match_score(student_answer, expected)
+                    best_score = max(best_score, match_score)
+                score = best_score
+                is_correct = score >= 0.7
             else:
+                # AI grading for open-ended questions
                 expected = q.correct_answer if q.correct_answer is not None else q.correct_answer_schema
                 score = grade_open_answer(
                     question_text=q.question_text,
@@ -422,18 +1003,22 @@ def update_answer_score(answer_id: int, grade: GradeUpdate, db: Session = Depend
     ans = db.query(Answer).filter(Answer.id == answer_id).first()
     if not ans:
         raise HTTPException(status_code=404, detail="Answer not found")
+
+    sub = db.query(Submission).filter(Submission.id == ans.submission_id).first()
+    if not sub:
+        raise HTTPException(status_code=404, detail="Submission not found")
+
+    paper = db.query(Paper).filter(Paper.id == sub.paper_id).first()
+    if paper is None:
+        raise HTTPException(status_code=404, detail="Paper not found")
+
+    if current_user.role != "admin" and paper.created_by != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized")
         
     ans.score = grade.score
     
-    # Calculate submission total score
-    sub = db.query(Submission).filter(Submission.id == ans.submission_id).first()
-    
-    # Calculate total score from all answer scores.
-    # In a real system, we might weigh questions differently. 
-    # Here we sum the individual scores.
-    
     all_answers = db.query(Answer).filter(Answer.submission_id == sub.id).all()
-    total = sum([(a.score or 0) for a in all_answers])
+    total = _aggregate_submission_score([a.score for a in all_answers])
     sub.score = total
     
     db.commit()
@@ -464,25 +1049,45 @@ def get_submission_detail(submission_id: int, db: Session = Depends(get_db), cur
         
     if current_user.role == "student" and sub.student_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized")
+
+    if current_user.role == "teacher" and sub.paper.created_by != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    
+    # Check if we should show correct answers
+    paper = sub.paper
+    is_student = current_user.role == "student"
+    should_show_answers = not is_student or paper.show_answers
         
     answers = db.query(Answer).filter(Answer.submission_id == sub.id).all()
     ans_list = []
     for a in answers:
         q = db.query(Question).filter(Question.id == a.question_id).first()
-        ans_list.append({
+        ans_item = {
             "id": a.id,
+            "question_id": a.question_id,
             "question_text": q.question_text if q else "Unknown Question",
             "question_type": q.question_type if q else "unknown",
+            "options": q.options if q else None,
             "max_score": 10, # Default max score for display purposes
             "answer": a.answer,
             "is_correct": a.is_correct,
-            "score": a.score
-        })
+            "score": a.score,
+            "word_count": a.word_count,
+            "selected_prompt": a.selected_prompt,
+            "rubric_scores": a.rubric_scores,
+            "writing_metrics": a.writing_metrics,
+            "sentence_feedback": a.sentence_feedback,
+        }
+        # Include correct answer only if allowed
+        if should_show_answers and q:
+            ans_item["correct_answer"] = q.correct_answer
+        ans_list.append(ans_item)
         
     return {
         "id": sub.id,
         "student_name": sub.student.username,
         "paper_title": sub.paper.title,
         "score": sub.score,
+        "show_answers": paper.show_answers,
         "answers": ans_list
     }

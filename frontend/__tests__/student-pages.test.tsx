@@ -323,8 +323,8 @@ describe('Student pages', () => {
 
   it('handles open-answer question and submit fallback', async () => {
     localStorage.setItem('student_token', 'token');
-    const push = jest.fn();
-    __setRouter({ pathname: '/student/paper/[id]', query: { id: '1' }, replace: jest.fn(), push, back: jest.fn() });
+    const replace = jest.fn();
+    __setRouter({ pathname: '/student/paper/[id]', query: { id: '1' }, replace, push: jest.fn(), back: jest.fn() });
 
     mockedApi.get.mockResolvedValue({
       data: {
@@ -344,7 +344,7 @@ describe('Student pages', () => {
     (window.confirm as jest.Mock).mockImplementationOnce(() => true);
     fireEvent.click(screen.getByRole('button', { name: /submit exam/i }));
 
-    await waitFor(() => expect(push).toHaveBeenCalledWith('/student/home'));
+    await waitFor(() => expect(replace).toHaveBeenCalledWith('/student/home'));
   });
 
   it('ticks timer and shows red countdown', async () => {
@@ -407,7 +407,7 @@ describe('Student pages', () => {
     await waitFor(() => expect(mockedApi.post).toHaveBeenCalled());
     expect(window.confirm).not.toHaveBeenCalled();
     expect(window.alert).toHaveBeenCalledWith('Time is up! Auto-submitting...');
-    expect(replace).toHaveBeenCalledWith('/student/paper/8?submitted=1&submission_id=123');
+    expect(replace).toHaveBeenCalledWith('/student/home');
     jest.useRealTimers();
   });
 

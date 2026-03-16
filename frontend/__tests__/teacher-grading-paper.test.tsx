@@ -53,7 +53,7 @@ describe('Teacher grading and paper detail', () => {
     fireEvent.change(scoreInput, { target: { value: '7' } });
     fireEvent.blur(scoreInput);
 
-    await waitFor(() => expect(mockedApi.put).toHaveBeenCalledWith('/submissions/answers/1/score', { score: 7 }));
+    await waitFor(() => expect(mockedApi.put).toHaveBeenCalledWith('/papers/submissions/answers/1/score', { score: 7 }));
   });
 
   it('handles score update failure', async () => {

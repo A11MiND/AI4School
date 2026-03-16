@@ -1,15 +1,20 @@
+import os
+from dotenv import load_dotenv
+
+# Load environment variables before importing modules that read os.getenv at import time.
+load_dotenv()
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
+
 from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 from fastapi.security import OAuth2PasswordRequestForm
 from datetime import timedelta
-import os
 
 from .database import engine, get_db, Base
 from .models import *  # Import all models to ensure they are registered
 from .auth import jwt
-from .models import student_notebook # Explicitly import new model
 from .routers import auth, papers, classes, analytics, documents, assignments, users
 
 # Initialize Database Tables
@@ -41,12 +46,10 @@ app.add_middleware(
 )
 
 app.include_router(auth.router)
-# app.include_router(questions.router)
 app.include_router(papers.router)
 app.include_router(classes.router)
 app.include_router(assignments.router)
 app.include_router(users.router)
-# app.include_router(search.router)
 app.include_router(analytics.router)
 app.include_router(documents.router)
 

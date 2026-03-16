@@ -6,6 +6,7 @@ import { Clock, ArrowLeft, Send, FileText } from 'lucide-react';
 export default function TakePaper() {
     const router = useRouter();
     const { id } = router.query;
+    const assignmentId = typeof router.query.assignment_id === 'string' ? router.query.assignment_id : null;
     const submissionId = typeof router.query.submission_id === 'string' ? router.query.submission_id : null;
     const isSubmittedView = router.query.submitted === '1' && Boolean(submissionId);
     const [paper, setPaper] = useState<any>(null);
@@ -60,7 +61,8 @@ export default function TakePaper() {
 
     const loadPaper = async () => {
         try {
-            const res = await api.get(`/papers/${id}`);
+            const query = assignmentId ? `?assignment_id=${assignmentId}` : '';
+            const res = await api.get(`/papers/${id}${query}`);
             const p = res.data;
             // Ensure fresh start for "Take Paper" mode
             setPaper({ ...p, submission: null });
@@ -101,6 +103,7 @@ export default function TakePaper() {
     const isPhraseType = (value: string) => ['phrase_extraction'].includes(normalizeType(value));
     const isTableType = (value: string) => ['table', 'chart', 'table_chart'].includes(normalizeType(value));
     const stripQuestionPrefix = (text: string) => text.replace(/^\[.*?\]\s*/, '');
+    const normalizeOptionText = (value: string) => value.replace(/^[A-Ga-g][\.|\)]\s+/, '').trim();
     const splitQuestionText = (text: string) => {
         const cleaned = (text || '').trim();
         const lines = cleaned.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
@@ -108,6 +111,26 @@ export default function TakePaper() {
             return { prompt: lines[0], body: lines.slice(1).join('\n') };
         }
         return { prompt: '', body: cleaned };
+    };
+
+    const resolveQuestionType = (question: any) => {
+        const raw = normalizeType(question.question_type);
+        const text = (question.question_text || '').toLowerCase();
+        const options = Array.isArray(question.options) ? question.options : [];
+
+        if (isMcType(raw) || isTfType(raw)) return raw;
+        if (isGapType(raw) || isMatchingType(raw) || isTableType(raw)) return raw;
+
+        const hasTable = parseTableRows(text) !== null || text.includes('complete the table') || text.includes('table:');
+        if (hasTable) return 'table';
+
+        const hasMatching = text.includes('match') && options.length > 0;
+        if (hasMatching) return 'matching';
+
+        const hasGap = /_{2,}/.test(question.question_text || '');
+        if (hasGap) return 'gap';
+
+        return raw || 'short';
     };
 
     const parseAnswerArray = (value: string | undefined) => {
@@ -218,20 +241,20 @@ export default function TakePaper() {
         return {
             prompt,
             leftItems: leftItems.length > 0 ? leftItems : options.map((_, idx) => `Item ${idx + 1}`),
-            options
+            options: options.map((opt) => normalizeOptionText(String(opt)))
         };
     };
 
-    const renderMatching = (question: any, text: string, readOnly: boolean) => {
+    const renderMatching = (question: any, text: string, readOnly: boolean, instruction?: string) => {
         const parsed = parseMatchingData(text, Array.isArray(question.options) ? question.options : undefined);
         const stored = parseAnswerArray(answers[question.id]);
         const values = Array.from({ length: parsed.leftItems.length }, (_, idx) => stored[idx] || '');
 
         return (
             <div className="space-y-4">
-                {parsed.prompt && (
+                {(instruction || parsed.prompt) && (
                     <div className="text-slate-700 whitespace-pre-wrap text-base">
-                        {parsed.prompt}
+                        {instruction || parsed.prompt}
                     </div>
                 )}
                 <div className="flex flex-wrap gap-2">
@@ -357,14 +380,16 @@ export default function TakePaper() {
         );
     };
 
-    const renderAnswerInput = (question: any, text: string, readOnly: boolean) => {
+    const renderAnswerInput = (question: any, text: string, readOnly: boolean, instruction?: string) => {
         const myAns = answers[question.id];
-        if (isMcType(question.question_type) && Array.isArray(question.options)) {
+        const resolvedType = resolveQuestionType(question);
+        if (isMcType(resolvedType) && Array.isArray(question.options)) {
             return (
                 <div className="space-y-3">
                     {question.options.map((opt: string, i: number) => {
                         const val = String.fromCharCode(65 + i);
                         const isSelected = myAns === val;
+                        const displayText = normalizeOptionText(String(opt));
                         return (
                             <label
                                 key={i}
@@ -389,7 +414,7 @@ export default function TakePaper() {
                                 <div className="ml-3 flex text-base items-center">
                                     <span className="font-semibold text-slate-500 w-6">{val}.</span>
                                     <span className={`text-base ${isSelected ? 'text-indigo-900 font-semibold' : 'text-slate-700'}`}>
-                                        {opt}
+                                        {displayText}
                                     </span>
                                 </div>
                             </label>
@@ -399,7 +424,7 @@ export default function TakePaper() {
             );
         }
 
-        if (isTfType(question.question_type)) {
+        if (isTfType(resolvedType)) {
             const options = [
                 { label: 'True', value: 'T' },
                 { label: 'False', value: 'F' },
@@ -427,15 +452,15 @@ export default function TakePaper() {
             );
         }
 
-        if (isGapType(question.question_type)) {
+        if (isGapType(resolvedType)) {
             return renderGapInputs(question, text, readOnly);
         }
 
-        if (isMatchingType(question.question_type)) {
-            return renderMatching(question, text, readOnly);
+        if (isMatchingType(resolvedType)) {
+            return renderMatching(question, text, readOnly, instruction);
         }
 
-        if (isTableType(question.question_type)) {
+        if (isTableType(resolvedType)) {
             return (
                 <div className="space-y-3">
                     {renderTableQuestion(question, text, readOnly)}
@@ -475,20 +500,24 @@ export default function TakePaper() {
                 answers: Object.entries(answers).map(([qId, val]) => ({
                     question_id: parseInt(qId),
                     answer: val
-                }))
+                })),
+                assignment_id: assignmentId ? parseInt(assignmentId, 10) : undefined
             };
             const res = await api.post(`/papers/${id}/submit`, payload);
-            if (res.data.submission_id) {
-                if (typeof window !== 'undefined') {
-                    window.localStorage.setItem(
-                        `paper-${id}-submission-${res.data.submission_id}`,
-                        JSON.stringify(answers)
-                    );
-                }
-                router.replace(`/student/paper/${id}?submitted=1&submission_id=${res.data.submission_id}`);
-            } else {
-                router.push('/student/home');
+            if (res.data.submission_id && typeof window !== 'undefined') {
+                window.localStorage.setItem(
+                    `paper-${id}-submission-${res.data.submission_id}`,
+                    JSON.stringify(answers)
+                );
             }
+            if (document.fullscreenElement) {
+                try {
+                    await document.exitFullscreen();
+                } catch (error) {
+                    console.warn('Exit fullscreen failed', error);
+                }
+            }
+            router.replace('/student/home');
         } catch (err: any) {
             alert(err.response?.data?.message || "Submission failed");
         } finally {
@@ -518,18 +547,26 @@ export default function TakePaper() {
                         <div className="bg-white rounded-xl p-6 max-w-md w-full text-center space-y-4">
                             <h2 className="text-lg font-semibold text-slate-900">Enter Fullscreen to Continue</h2>
                             <p className="text-sm text-slate-500">Fullscreen is required for this exam.</p>
-                            <button
-                                className="w-full py-2.5 rounded-lg bg-indigo-600 text-white font-medium hover:bg-indigo-700"
-                                onClick={async () => {
-                                    try {
-                                        await document.documentElement.requestFullscreen();
-                                    } catch (err) {
-                                        alert('Fullscreen request was blocked. Please allow fullscreen and try again.');
-                                    }
-                                }}
-                            >
-                                Enter Fullscreen
-                            </button>
+                            <div className="space-y-2">
+                                <button
+                                    className="w-full py-2.5 rounded-lg bg-indigo-600 text-white font-medium hover:bg-indigo-700"
+                                    onClick={async () => {
+                                        try {
+                                            await document.documentElement.requestFullscreen();
+                                        } catch (err) {
+                                            alert('Fullscreen request was blocked. Please allow fullscreen and try again.');
+                                        }
+                                    }}
+                                >
+                                    Enter Fullscreen
+                                </button>
+                                <button
+                                    className="w-full py-2.5 rounded-lg bg-slate-100 text-slate-700 font-medium hover:bg-slate-200"
+                                    onClick={() => router.push('/student/home')}
+                                >
+                                    Back to Student Home
+                                </button>
+                            </div>
                         </div>
                     </div>
                 )}
@@ -578,10 +615,12 @@ export default function TakePaper() {
                         {paper.questions.map((q: any, idx: number) => (
                             (() => {
                                 const cleanedText = stripQuestionPrefix(q.question_text || '');
-                                const inlineText = isGapType(q.question_type) || isMatchingType(q.question_type) || isTableType(q.question_type);
+                                const resolvedType = resolveQuestionType(q);
+                                const inlineText = isGapType(resolvedType) || isMatchingType(resolvedType) || isTableType(resolvedType);
                                 const split = splitQuestionText(cleanedText);
                                 const questionText = inlineText ? (split.body || cleanedText) : cleanedText;
-                                const headerText = inlineText ? (split.prompt || '') : cleanedText;
+                                const headerText = split.prompt || (!inlineText ? cleanedText : '');
+                                const instructionText = inlineText ? (split.prompt || cleanedText) : undefined;
 
                                 return (
                             <div key={q.id} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
@@ -597,7 +636,7 @@ export default function TakePaper() {
                                 </div>
 
                                 <div className="ml-11 text-base">
-                                    {renderAnswerInput(q, questionText, isSubmittedView)}
+                                    {renderAnswerInput(q, questionText, isSubmittedView, instructionText)}
                                 </div>
                             </div>
                                 );

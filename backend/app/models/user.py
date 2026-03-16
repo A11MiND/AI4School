@@ -11,4 +11,6 @@ class User(Base):
     role = Column(String, nullable=False)  # admin / teacher / student
     full_name = Column(String, nullable=True)
     avatar_url = Column(String, nullable=True)
+    ai_provider = Column(String, nullable=True)
+    ai_model = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

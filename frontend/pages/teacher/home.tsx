@@ -27,8 +27,8 @@ export default function TeacherHome() {
       <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
         
         <Link href="/teacher/documents" className="block group">
-          <div className="bg-white p-6 rounded-xl border border-gray-100 shadow-sm hover:shadow-md transition-all group-hover:border-indigo-200 h-full">
-            <div className="bg-indigo-50 w-12 h-12 rounded-lg flex items-center justify-center text-indigo-600 mb-4 group-hover:bg-indigo-600 group-hover:text-white transition-colors">
+          <div className="bg-white p-6 rounded-xl border border-gray-100 shadow-sm hover:shadow-md transition-all group-hover:border-emerald-200 h-full">
+            <div className="bg-emerald-50 w-12 h-12 rounded-lg flex items-center justify-center text-emerald-600 mb-4 group-hover:bg-emerald-600 group-hover:text-white transition-colors">
               <Upload size={24} />
             </div>
             <h3 className="font-semibold text-gray-800">Upload Content</h3>
@@ -36,7 +36,7 @@ export default function TeacherHome() {
           </div>
         </Link>
         
-        <Link href="/teacher/papers" className="block group">
+        <Link href="/teacher/paper/reading" className="block group">
           <div className="bg-white p-6 rounded-xl border border-gray-100 shadow-sm hover:shadow-md transition-all group-hover:border-green-200 h-full">
             <div className="bg-green-50 w-12 h-12 rounded-lg flex items-center justify-center text-green-600 mb-4 group-hover:bg-green-600 group-hover:text-white transition-colors">
               <FileText size={24} />
@@ -47,8 +47,8 @@ export default function TeacherHome() {
         </Link>
 
         <Link href="/teacher/classes" className="block group">
-          <div className="bg-white p-6 rounded-xl border border-gray-100 shadow-sm hover:shadow-md transition-all group-hover:border-blue-200 h-full">
-            <div className="bg-blue-50 w-12 h-12 rounded-lg flex items-center justify-center text-blue-600 mb-4 group-hover:bg-blue-600 group-hover:text-white transition-colors">
+          <div className="bg-white p-6 rounded-xl border border-gray-100 shadow-sm hover:shadow-md transition-all group-hover:border-emerald-200 h-full">
+            <div className="bg-emerald-50 w-12 h-12 rounded-lg flex items-center justify-center text-emerald-600 mb-4 group-hover:bg-emerald-600 group-hover:text-white transition-colors">
               <BookOpen size={24} />
             </div>
             <h3 className="font-semibold text-gray-800">My Classes</h3>
@@ -57,8 +57,8 @@ export default function TeacherHome() {
         </Link>
         
         <Link href="/teacher/analytics" className="block group">
-          <div className="bg-white p-6 rounded-xl border border-gray-100 shadow-sm hover:shadow-md transition-all group-hover:border-purple-200 h-full">
-            <div className="bg-purple-50 w-12 h-12 rounded-lg flex items-center justify-center text-purple-600 mb-4 group-hover:bg-purple-600 group-hover:text-white transition-colors">
+          <div className="bg-white p-6 rounded-xl border border-gray-100 shadow-sm hover:shadow-md transition-all group-hover:border-emerald-200 h-full">
+            <div className="bg-emerald-50 w-12 h-12 rounded-lg flex items-center justify-center text-emerald-600 mb-4 group-hover:bg-emerald-600 group-hover:text-white transition-colors">
               <BarChart size={24} />
             </div>
             <h3 className="font-semibold text-gray-800">Analytics</h3>
@@ -83,12 +83,13 @@ export default function TeacherHome() {
                   </div>
                 </div>
                 <div className="flex items-center gap-4 py-3 border-b border-gray-50 last:border-0 hover:bg-gray-50 rounded-lg px-2 transition">
-                  <div className="bg-gray-100 p-2 rounded-full text-gray-400">
+                  <div className="bg-emerald-100 p-2 rounded-full text-emerald-600">
                     <Calendar size={16} />
                   </div>
                   <div className="flex-1">
-                    <p className="text-sm font-medium text-gray-900">Other Modules</p>
-                    <p className="text-xs text-gray-500">Writing, Listening, Speaking coming soon.</p>
+                    <p className="text-sm font-medium text-gray-900">Writing Module</p>
+                    <p className="text-xs text-emerald-600">Active & Ready</p>
+                    <Link href="/teacher/paper/writing" className="text-xs text-emerald-700 hover:text-emerald-800">Open Writing Papers</Link>
                   </div>
                 </div>
             </div>

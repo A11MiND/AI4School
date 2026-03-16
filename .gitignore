@@ -34,3 +34,5 @@ backend/test.db
 
 # Docs build
 docs/_build/
+backend/verdant-legacy-473707-g3-78ae41511d7f.json
+.env

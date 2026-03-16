@@ -28,23 +28,24 @@ describe('Student additional pages', () => {
 
     mockedApi.get.mockResolvedValueOnce({
       data: [
-        { id: 1, title: 'Pending Paper', status: 'pending' },
-        { id: 2, title: 'Completed Paper', status: 'completed', latest_score: 88, latest_submission_id: 5 },
-        { id: 3, title: 'Completed No Score', status: 'completed' }
+        { id: 1, title: 'Pending Paper', status: 'pending', paper_type: 'reading', assignment_id: 1 },
+        { id: 2, title: 'Completed Paper', status: 'completed', latest_score: 88, latest_submission_id: 5, paper_type: 'reading', assignment_id: 2 },
+        { id: 3, title: 'Completed No Score', status: 'completed', paper_type: 'reading', assignment_id: 3 },
+        { id: 4, title: 'Should Not Show Writing', status: 'pending', paper_type: 'writing', assignment_id: 4 }
       ]
     } as any);
 
     render(<StudentReading />);
     await waitFor(() => expect(screen.getByText('Pending Paper')).toBeInTheDocument());
-    expect(screen.getAllByText(/View Result/i)).toHaveLength(2);
+    expect(screen.queryByText('Should Not Show Writing')).not.toBeInTheDocument();
+    expect(screen.getAllByText(/View Result/i)).toHaveLength(1);
     expect(screen.getByText(/Start/i)).toBeInTheDocument();
     expect(screen.getByText('Score: 88.0')).toBeInTheDocument();
-    expect(screen.getByText('Score: 0')).toBeInTheDocument();
+    expect(screen.getAllByText('正在打分').length).toBeGreaterThanOrEqual(2);
     const viewLinks = screen.getAllByText(/View Result/i);
     const viewLink = viewLinks[0].closest('a') as HTMLAnchorElement;
     expect(viewLink.href).toContain('/student/submission/5');
-    const fallbackLink = viewLinks[1].closest('a') as HTMLAnchorElement;
-    expect(fallbackLink.href).toContain('/student/submission/3');
+    expect(screen.getByRole('button', { name: '正在打分' })).toBeDisabled();
   });
 
   it('logs error when reading papers fetch fails', async () => {
@@ -128,7 +129,7 @@ describe('Student additional pages', () => {
     });
 
     await waitFor(() => expect(mockedApi.post).toHaveBeenCalled());
-      expect(replace).toHaveBeenCalledWith('/student/paper/1?submitted=1&submission_id=99');
+    expect(replace).toHaveBeenCalledWith('/student/home');
 
     jest.useRealTimers();
   });
@@ -249,7 +250,7 @@ describe('Student additional pages', () => {
 
     await waitFor(() => expect(window.alert).toHaveBeenCalledWith('Time is up! Auto-submitting...'));
     await waitFor(() => expect(mockedApi.post).toHaveBeenCalled());
-      expect(replace).toHaveBeenCalledWith('/student/paper/2?submitted=1&submission_id=123');
+    expect(replace).toHaveBeenCalledWith('/student/home');
 
     jest.useRealTimers();
   });

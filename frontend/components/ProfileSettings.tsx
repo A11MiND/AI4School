@@ -12,6 +12,8 @@ interface UserProfile {
   full_name: string;
   avatar_url: string;
   role: string;
+  ai_provider?: string;
+  ai_model?: string;
 }
 
 const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role }) => {
@@ -19,16 +21,49 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role }) => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{type: 'success' | 'error', text: string} | null>(null);
+  const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
+  const [testMessage, setTestMessage] = useState<string>('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [formData, setFormData] = useState({
     full_name: '',
     username: '',
     password: '',
-    confirm_password: ''
+    confirm_password: '',
+    ai_provider: 'deepseek',
+    ai_model: 'deepseek-chat'
   });
 
+  const providerOptions = [
+    { value: 'deepseek', label: 'DeepSeek' },
+    { value: 'qwen', label: 'Qwen' },
+    { value: 'gemini', label: 'Gemini (Vertex)' }
+  ];
+
+  const modelOptions: Record<string, string[]> = {
+    deepseek: ['deepseek-chat'],
+    qwen: [
+      'qwen-plus',
+      'qwen3-max',
+      'qwen-flash',
+      'qwen-turbo'
+    ],
+    gemini: [
+      'gemini-2.5-flash-lite',
+      'gemini-2.5-flash',
+      'gemini-2.5-pro',
+    ]
+  };
+
   const getToken = () => localStorage.getItem(role === 'student' ? 'student_token' : 'teacher_token');
+  const getStoredProvider = () => localStorage.getItem('ai_provider') || 'deepseek';
+  const getStoredModel = (provider: string) => {
+    const stored = localStorage.getItem('ai_model');
+    if (stored && modelOptions[provider]?.includes(stored)) {
+      return stored;
+    }
+    return modelOptions[provider]?.[0] || '';
+  };
 
 
   const fetchProfile = async () => {
@@ -54,6 +89,13 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role }) => {
   };
 
   useEffect(() => {
+    const provider = getStoredProvider();
+    const model = getStoredModel(provider);
+    setFormData(prev => ({
+      ...prev,
+      ai_provider: provider,
+      ai_model: model
+    }));
     fetchProfile();
   }, [role]);
 
@@ -114,6 +156,34 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role }) => {
       setMessage({ type: 'error', text: errorMsg });
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleTestConnection = async () => {
+    setTestStatus('testing');
+    setTestMessage('');
+    const token = getToken();
+    if (!token) {
+      setTestStatus('error');
+      setTestMessage('Please sign in again to test the connection.');
+      return;
+    }
+    try {
+      const res = await axios.post('http://localhost:8000/users/test-connection', {
+        ai_provider: formData.ai_provider,
+        ai_model: formData.ai_model
+      }, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setTestStatus('success');
+      setTestMessage(`Success: ${res.data.message}`);
+    } catch (err: any) {
+      setTestStatus('error');
+      if (err.response?.status === 401) {
+        setTestMessage('Unauthorized: please sign in again.');
+      } else {
+        setTestMessage(err.response?.data?.detail || 'Connection failed');
+      }
     }
   };
 
@@ -184,6 +254,69 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role }) => {
                 />
               </div>
             </div>
+
+            {role === 'teacher' && (
+              <div className="pt-6 border-t border-slate-100">
+                <h3 className="text-lg font-semibold text-slate-800 mb-4 flex items-center gap-2">
+                  AI Model
+                </h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-2">Provider</label>
+                    <select
+                      value={formData.ai_provider}
+                      onChange={e => {
+                        const provider = e.target.value;
+                        const nextModel = modelOptions[provider]?.[0] || '';
+                        localStorage.setItem('ai_provider', provider);
+                        localStorage.setItem('ai_model', nextModel);
+                        setFormData(prev => ({ ...prev, ai_provider: provider, ai_model: nextModel }));
+                      }}
+                      className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
+                    >
+                      {providerOptions.map(option => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-2">Model</label>
+                    <select
+                      value={formData.ai_model}
+                      onChange={e => {
+                        const model = e.target.value;
+                        localStorage.setItem('ai_model', model);
+                        setFormData(prev => ({ ...prev, ai_model: model }));
+                      }}
+                      className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
+                    >
+                      {modelOptions[formData.ai_provider]?.map(m => (
+                        <option key={m} value={m}>{m}</option>
+                      ))}
+                    </select>
+                    <p className="mt-1 text-xs text-gray-500">
+                      Model IDs are aligned with the official Vertex AI and MaaS lists for stable use.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="md:col-span-2 flex items-center mt-2">
+                  <button
+                    type="button"
+                    onClick={handleTestConnection}
+                    disabled={testStatus === 'testing'}
+                    className="px-4 py-2 bg-blue-100 text-blue-700 rounded-md hover:bg-blue-200 text-sm font-medium transition-colors"
+                  >
+                    {testStatus === 'testing' ? 'Testing...' : 'Test Connection'}
+                  </button>
+                  {testMessage && (
+                    <span className={`ml-3 text-sm ${testStatus === 'success' ? 'text-green-600' : 'text-red-600'}`}>
+                      {testMessage}
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
 
             <div className="pt-6 border-t border-slate-100">
               <h3 className="text-lg font-semibold text-slate-800 mb-4 flex items-center gap-2">

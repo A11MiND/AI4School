@@ -1,5 +1,7 @@
 from datetime import datetime, timedelta
+import os
 from typing import Optional
+from dotenv import load_dotenv
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from fastapi.security import OAuth2PasswordBearer
@@ -9,7 +11,16 @@ from ..database import get_db
 from ..models import User
 
 # Configuration
-SECRET_KEY = "CHANGE_THIS_IN_PRODUCTION_SECRET_KEY"
+# Load .env here as a safety net in case import order changes.
+load_dotenv()
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", ".env"))
+
+SECRET_KEY = os.getenv("JWT_SECRET_KEY", "")
+if len(SECRET_KEY) < 32:
+    raise RuntimeError(
+        "JWT_SECRET_KEY must be set and at least 32 characters long. "
+        "Set it in environment or backend/.env"
+    )
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 180
 

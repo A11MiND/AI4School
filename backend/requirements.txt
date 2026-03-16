@@ -7,9 +7,12 @@ passlib[bcrypt]
 bcrypt==3.2.2
 pydantic
 python-multipart
+python-dotenv
 openai
 python-docx
 pypdf
 pdfplumber
+requests
+google-auth
 pytest
 pytest-cov

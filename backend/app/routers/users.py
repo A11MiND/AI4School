@@ -14,10 +14,18 @@ router = APIRouter(
     tags=["users"]
 )
 
+ALLOWED_AI_PROVIDERS = {"deepseek", "qwen", "gemini"}
+
 class UserProfileUpdate(BaseModel):
     username: Optional[str] = None
     full_name: Optional[str] = None
     password: Optional[str] = None
+    ai_provider: Optional[str] = None
+    ai_model: Optional[str] = None
+
+class TestAIConnectionRequest(BaseModel):
+    ai_provider: str
+    ai_model: Optional[str] = None
 
 @router.get("/me")
 def get_current_user_profile(current_user: User = Depends(get_current_user)):
@@ -26,7 +34,9 @@ def get_current_user_profile(current_user: User = Depends(get_current_user)):
         "username": current_user.username,
         "role": current_user.role,
         "full_name": current_user.full_name,
-        "avatar_url": current_user.avatar_url
+        "avatar_url": current_user.avatar_url,
+        "ai_provider": current_user.ai_provider,
+        "ai_model": current_user.ai_model
     }
 
 @router.put("/me")
@@ -47,13 +57,25 @@ def update_user_profile(
         
     if data.password:
         current_user.password_hash = get_password_hash(data.password)
+
+    if data.ai_provider is not None or data.ai_model is not None:
+        if current_user.role not in {"teacher", "admin"}:
+            raise HTTPException(status_code=403, detail="Not authorized to change AI settings")
+        if data.ai_provider is not None:
+            if data.ai_provider not in ALLOWED_AI_PROVIDERS:
+                raise HTTPException(status_code=400, detail="Invalid AI provider")
+            current_user.ai_provider = data.ai_provider
+        if data.ai_model is not None:
+            current_user.ai_model = data.ai_model
         
     db.commit()
     db.refresh(current_user)
     return {
         "message": "Profile updated successfully",
         "username": current_user.username,
-        "full_name": current_user.full_name
+        "full_name": current_user.full_name,
+        "ai_provider": current_user.ai_provider,
+        "ai_model": current_user.ai_model
     }
 
 @router.post("/me/avatar")
@@ -81,3 +103,38 @@ def upload_avatar(
     db.commit()
     
     return {"avatar_url": relative_path}
+
+@router.post("/test-connection")
+def test_ai_connection(
+    req: TestAIConnectionRequest,
+    current_user: User = Depends(get_current_user)
+):
+    if current_user.role != "teacher" and current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Only teachers can test AI connection")
+
+    from ..services.ai_generator import _call_chat, _resolve_ai_config
+
+    # Construct options dict to resolve config
+    options = {
+        "ai_provider": req.ai_provider,
+        "ai_model": req.ai_model
+    }
+    
+    provider, model = _resolve_ai_config(options)
+
+    try:
+        # Simple prompt to test connection
+        system_prompt = "You are a helpful assistant."
+        user_prompt = "Reply with 'Connection Successful' and nothing else."
+        
+        response = _call_chat(
+            provider=provider,
+            model=model,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            temperature=0.1,
+            max_tokens=10
+        )
+        return {"status": "success", "message": response.strip(), "provider": provider, "model": model}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Connection failed: {str(e)}")

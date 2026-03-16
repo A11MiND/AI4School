@@ -81,7 +81,7 @@ export default function StudentHome() {
                                                  <span className="bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded text-xs font-medium">Attempt {p.submitted_count + 1} of {p.max_attempts || 1}</span>
                                              </div>
                                          </div>
-                                         <Link href={`/student/paper/${p.id}`}>
+                                         <Link href={`${(p.paper_type || 'reading') === 'writing' ? '/student/paper/writing/' : '/student/paper/reading/'}${p.id}?assignment_id=${p.assignment_id}`}>
                                             <button className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700 transition shadow-sm">
                                                 Start <ArrowRight size={16} />
                                             </button>
@@ -106,6 +106,7 @@ export default function StudentHome() {
                         ) : (
                             <div className="space-y-3">
                                 {completedAssignments.slice(0, 5).map(p => (
+                                    p.latest_submission_id ? (
                                     <Link key={p.assignment_id} href={`/student/submission/${p.latest_submission_id}`}>
                                         <div className="flex items-center justify-between p-3 hover:bg-gray-50 rounded-lg cursor-pointer transition border border-transparent hover:border-gray-100">
                                             <div className="overflow-hidden mr-3">
@@ -113,12 +114,23 @@ export default function StudentHome() {
                                                 <p className="text-xs text-gray-500">{new Date().toLocaleDateString()}</p>
                                             </div>
                                             <div className={`font-bold text-sm ${
-                                                (p.latest_score || 0) >= 80 ? 'text-green-600' : 'text-amber-600'
+                                                typeof p.latest_score === 'number'
+                                                    ? (p.latest_score >= 80 ? 'text-green-600' : 'text-amber-600')
+                                                    : 'text-slate-500'
                                             }`}>
-                                                {Math.round(p.latest_score) || 0}
+                                                {typeof p.latest_score === 'number' ? Math.round(p.latest_score) : '正在打分'}
                                             </div>
                                         </div>
                                     </Link>
+                                    ) : (
+                                    <div key={p.assignment_id} className="flex items-center justify-between p-3 rounded-lg border border-amber-100 bg-amber-50">
+                                        <div className="overflow-hidden mr-3">
+                                            <p className="text-sm font-medium text-gray-800 truncate">{p.title}</p>
+                                            <p className="text-xs text-amber-700">正在打分</p>
+                                        </div>
+                                        <div className="font-bold text-sm text-amber-700">正在打分</div>
+                                    </div>
+                                    )
                                 ))}
                             </div>
                         )}

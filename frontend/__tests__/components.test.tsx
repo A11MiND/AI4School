@@ -82,16 +82,13 @@ describe('Shared components', () => {
     expect(screen.getByText('TEACHER WORKSPACE')).toBeInTheDocument();
   });
 
-  it('prevents navigation for WIP items', async () => {
+  it('keeps teacher Writing navigation enabled', async () => {
     localStorage.setItem('teacher_token', 'token');
     __setRouter({ pathname: '/teacher/home' });
     render(<Sidebar />);
 
     const link = screen.getByText('Writing').closest('a') as HTMLAnchorElement;
-    const event = createEvent.click(link);
-    const preventDefault = jest.spyOn(event, 'preventDefault');
-    fireEvent(link, event);
-    expect(preventDefault).toHaveBeenCalled();
+    expect(link.getAttribute('href')).toBe('/teacher/paper/writing');
   });
 
   it('renders ProfileSettings for teacher', async () => {

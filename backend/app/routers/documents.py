@@ -16,7 +16,7 @@ import os
 import uuid
 import datetime
 from typing import Optional, List
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from fastapi.responses import FileResponse
 
 router = APIRouter(
@@ -37,9 +37,8 @@ class DocumentResponse(BaseModel):
     uploaded_by: int
     created_at: Optional[datetime.datetime] = None  # Add created_at
     visible: Optional[bool] = None
-    
-    class Config:
-        orm_mode = True
+
+    model_config = ConfigDict(from_attributes=True)
 
 def extract_text_from_file(file_content: bytes, filename: str) -> str:
     text = ""
@@ -184,7 +183,7 @@ def list_documents(
 
     if current_user.role == "student":
         if class_id is None:
-            raise HTTPException(status_code=400, detail="class_id is required")
+            return []
         enrollment = db.query(StudentClass).filter(
             StudentClass.user_id == current_user.id,
             StudentClass.class_id == class_id
