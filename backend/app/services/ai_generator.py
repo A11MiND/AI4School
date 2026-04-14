@@ -247,6 +247,10 @@ def generate_dse_questions(article_content: str, options: Optional[Dict[str, obj
     """
     options_block = _build_generation_options(options)
     provider, model = _resolve_ai_config(options)
+    request_api_key = str(options.get("api_key") or "").strip() if options else ""
+    request_base_url = str(options.get("base_url") or "").strip() if options else ""
+    request_api_key = request_api_key or None
+    request_base_url = request_base_url or None
     
     system_prompt = (
         "You are an HKDSE English Language Paper 1 (Reading) question setter and marker.\n"
@@ -301,7 +305,9 @@ def generate_dse_questions(article_content: str, options: Optional[Dict[str, obj
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             temperature=temperature,
-            max_tokens=2000
+            max_tokens=2000,
+            api_key=request_api_key,
+            base_url=request_base_url,
         )
         
         data = _extract_json_block(content)
@@ -316,7 +322,9 @@ def generate_dse_questions(article_content: str, options: Optional[Dict[str, obj
                 system_prompt=retry_system_prompt,
                 user_prompt=user_prompt,
                 temperature=0.2,
-                max_tokens=2000
+                max_tokens=2000,
+                api_key=request_api_key,
+                base_url=request_base_url,
             )
             data = _extract_json_block(retry_content)
         if not data and content:
@@ -351,7 +359,9 @@ def generate_dse_questions(article_content: str, options: Optional[Dict[str, obj
                 system_prompt=repair_prompt,
                 user_prompt=repair_input,
                 temperature=0.0,
-                max_tokens=2000
+                max_tokens=2000,
+                api_key=request_api_key,
+                base_url=request_base_url,
             )
             data = _extract_json_block(repair_content)
         if not data:

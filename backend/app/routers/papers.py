@@ -56,6 +56,8 @@ class GenerateRequest(BaseModel):
     cognitive_load: Optional[str] = None
     ai_provider: Optional[str] = None
     ai_model: Optional[str] = None
+    api_key: Optional[str] = None
+    base_url: Optional[str] = None
 
 class AnswerSubmit(BaseModel):
     question_id: int
@@ -333,7 +335,9 @@ def generate_questions(request: GenerateRequest, current_user: User = Depends(ge
         "register": request.text_register,
         "cognitive_load": request.cognitive_load,
         "ai_provider": request.ai_provider,
-        "ai_model": request.ai_model
+        "ai_model": request.ai_model,
+        "api_key": request.api_key,
+        "base_url": request.base_url,
     }
     try:
         questions_data = generate_dse_questions(request.article_content, options)

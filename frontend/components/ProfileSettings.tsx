@@ -33,11 +33,30 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role }) => {
     confirm_password: '',
     ai_provider: 'deepseek',
     ai_model: 'deepseek-chat',
+    deepseek_api_key: '',
+    deepseek_base_url: 'https://api.deepseek.com/v1',
     qwen_api_key: '',
-    qwen_base_url: 'https://cn-hongkong.dashscope.aliyuncs.com/compatible-mode/v1',
+    qwen_base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
     openrouter_api_key: '',
     openrouter_base_url: 'https://openrouter.ai/api/v1'
   });
+
+  const providerTemplates = [
+    {
+      id: 'deepseek-default',
+      label: 'DeepSeek Template',
+      provider: 'deepseek',
+      model: 'deepseek-chat',
+      baseUrl: 'https://api.deepseek.com/v1'
+    },
+    {
+      id: 'qwen-default',
+      label: 'Qwen Template',
+      provider: 'qwen',
+      model: 'qwen-plus',
+      baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1'
+    }
+  ];
 
   const providerOptions = [
     { value: 'deepseek', label: 'DeepSeek' },
@@ -72,16 +91,41 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role }) => {
 
   const getToken = () => localStorage.getItem(role === 'student' ? 'student_token' : 'teacher_token');
   const getStoredProvider = () => localStorage.getItem('ai_provider') || 'deepseek';
+  const getStoredDeepSeekKey = () => localStorage.getItem('deepseek_api_key') || '';
+  const getStoredDeepSeekBase = () => localStorage.getItem('deepseek_base_url') || 'https://api.deepseek.com/v1';
   const getStoredQwenKey = () => localStorage.getItem('qwen_api_key') || '';
-  const getStoredQwenBase = () => localStorage.getItem('qwen_base_url') || 'https://cn-hongkong.dashscope.aliyuncs.com/compatible-mode/v1';
+  const getStoredQwenBase = () => localStorage.getItem('qwen_base_url') || 'https://dashscope.aliyuncs.com/compatible-mode/v1';
   const getStoredOpenRouterKey = () => localStorage.getItem('openrouter_api_key') || '';
   const getStoredOpenRouterBase = () => localStorage.getItem('openrouter_base_url') || 'https://openrouter.ai/api/v1';
   const getStoredModel = (provider: string) => {
     const stored = localStorage.getItem('ai_model');
-    if (stored && modelOptions[provider]?.includes(stored)) {
+    if (stored) {
       return stored;
     }
     return modelOptions[provider]?.[0] || '';
+  };
+
+  const applyProviderTemplate = (templateId: string) => {
+    const template = providerTemplates.find(t => t.id === templateId);
+    if (!template) return;
+
+    localStorage.setItem('ai_provider', template.provider);
+    localStorage.setItem('ai_model', template.model);
+
+    if (template.provider === 'deepseek') {
+      localStorage.setItem('deepseek_base_url', template.baseUrl);
+    }
+    if (template.provider === 'qwen') {
+      localStorage.setItem('qwen_base_url', template.baseUrl);
+    }
+
+    setFormData(prev => ({
+      ...prev,
+      ai_provider: template.provider,
+      ai_model: template.model,
+      deepseek_base_url: template.provider === 'deepseek' ? template.baseUrl : prev.deepseek_base_url,
+      qwen_base_url: template.provider === 'qwen' ? template.baseUrl : prev.qwen_base_url,
+    }));
   };
 
 
@@ -116,6 +160,8 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role }) => {
       ...prev,
       ai_provider: provider,
       ai_model: model,
+      deepseek_api_key: getStoredDeepSeekKey(),
+      deepseek_base_url: getStoredDeepSeekBase(),
       qwen_api_key: getStoredQwenKey(),
       qwen_base_url: getStoredQwenBase(),
       openrouter_api_key: getStoredOpenRouterKey(),
@@ -178,6 +224,10 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role }) => {
       });
       localStorage.setItem('ai_provider', formData.ai_provider);
       localStorage.setItem('ai_model', formData.ai_model);
+      localStorage.setItem('deepseek_base_url', formData.deepseek_base_url);
+      if (formData.deepseek_api_key) {
+        localStorage.setItem('deepseek_api_key', formData.deepseek_api_key);
+      }
       localStorage.setItem('qwen_base_url', formData.qwen_base_url);
       if (formData.qwen_api_key) {
         localStorage.setItem('qwen_api_key', formData.qwen_api_key);
@@ -211,11 +261,15 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role }) => {
         ai_model: formData.ai_model,
         api_key: formData.ai_provider === 'openrouter'
           ? formData.openrouter_api_key || undefined
+          : formData.ai_provider === 'deepseek'
+            ? formData.deepseek_api_key || undefined
           : formData.ai_provider === 'qwen'
             ? formData.qwen_api_key || undefined
             : undefined,
         base_url: formData.ai_provider === 'openrouter'
           ? formData.openrouter_base_url || undefined
+          : formData.ai_provider === 'deepseek'
+            ? formData.deepseek_base_url || undefined
           : formData.ai_provider === 'qwen'
             ? formData.qwen_base_url || undefined
             : undefined,
@@ -325,27 +379,69 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role }) => {
                         <option key={option.value} value={option.value}>{option.label}</option>
                       ))}
                     </select>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {providerTemplates.map(template => (
+                        <button
+                          key={template.id}
+                          type="button"
+                          onClick={() => applyProviderTemplate(template.id)}
+                          className="px-2.5 py-1 text-xs rounded-md border border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100"
+                        >
+                          {template.label}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-slate-700 mb-2">Model</label>
-                    <select
+                    <input
+                      type="text"
                       value={formData.ai_model}
                       onChange={e => {
-                        const model = e.target.value;
+                        const model = e.target.value.trim();
                         localStorage.setItem('ai_model', model);
                         setFormData(prev => ({ ...prev, ai_model: model }));
                       }}
+                      list="ai-model-presets"
                       className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
-                    >
+                      placeholder="e.g. deepseek-chat"
+                    />
+                    <datalist id="ai-model-presets">
                       {modelOptions[formData.ai_provider]?.map(m => (
-                        <option key={m} value={m}>{m}</option>
+                        <option key={m} value={m} />
                       ))}
-                    </select>
+                    </datalist>
                     <p className="mt-1 text-xs text-gray-500">
-                      Model IDs are aligned with the official Vertex AI and MaaS lists for stable use.
+                      You can type any custom model ID, or pick from provider presets.
                     </p>
                   </div>
                 </div>
+
+                {formData.ai_provider === 'deepseek' && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-4">
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-2">DeepSeek API Key</label>
+                      <input
+                        type="password"
+                        value={formData.deepseek_api_key}
+                        onChange={e => setFormData({ ...formData, deepseek_api_key: e.target.value })}
+                        className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
+                        placeholder="sk-..."
+                      />
+                      <p className="mt-1 text-xs text-gray-500">仅用于当前设备测试与生成；保存后会留在本地浏览器。</p>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-2">DeepSeek Base URL</label>
+                      <input
+                        type="text"
+                        value={formData.deepseek_base_url}
+                        onChange={e => setFormData({ ...formData, deepseek_base_url: e.target.value })}
+                        className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
+                        placeholder="https://api.deepseek.com/v1"
+                      />
+                    </div>
+                  </div>
+                )}
 
                 {formData.ai_provider === 'openrouter' && (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-4">
