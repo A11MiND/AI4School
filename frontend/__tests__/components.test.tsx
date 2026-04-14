@@ -109,7 +109,7 @@ describe('Shared components', () => {
 
     await waitFor(() => expect(screen.getByDisplayValue('Student Name')).toBeInTheDocument());
     const avatar = screen.getByAltText('Avatar') as HTMLImageElement;
-    expect(avatar.src).toContain('http://localhost:8000/uploads/avatar.png');
+    expect(avatar.src).toContain('/uploads/avatar.png');
   });
 
   it('defaults profile fields when names missing', async () => {

@@ -29,17 +29,20 @@ if not os.path.exists("uploads"):
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
 # CORS Setup
-origins = [
+default_origins = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
     "http://localhost:3001",
     "http://127.0.0.1:3001",
     "http://localhost:3002",
 ]
+origins_env = os.getenv("ALLOWED_ORIGINS", "")
+origins = [o.strip() for o in origins_env.split(",") if o.strip()] if origins_env else default_origins
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
+    allow_origin_regex=r"https://.*\.(trycloudflare\.com|loca\.lt)",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -52,6 +55,11 @@ app.include_router(assignments.router)
 app.include_router(users.router)
 app.include_router(analytics.router)
 app.include_router(documents.router)
+
+
+@app.get("/health")
+def health_check():
+    return {"status": "ok"}
 
 @app.post("/token", response_model=dict)
 async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):

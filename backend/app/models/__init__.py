@@ -7,3 +7,4 @@ from .submission import Submission, Answer
 from .document import Document
 from .document_visibility import DocumentClassVisibility
 from .assignment import Assignment
+from .speaking_session import SpeakingSession, SpeakingTurn

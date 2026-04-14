@@ -15,12 +15,15 @@ from ..models.user import User
 from ..models.document import Document
 from ..auth.jwt import get_current_user
 from ..services.ai_generator import generate_dse_questions, grade_open_answer
+from ..services.ai_generator import _call_chat, _resolve_ai_config
 from ..services.writing_grader import grade_writing_response
 from ..services.writing_metrics import compute_writing_metrics, metric_improvement_hints
 from ..services.writing_prompt_generator import generate_writing_prompts
+from ..services.memory_compression import compress_dialogue, estimate_tokens
 from ..models.assignment import Assignment
 from ..models.student_association import StudentClass
 from ..models.submission import Submission, Answer
+from ..models.speaking_session import SpeakingSession, SpeakingTurn
 
 router = APIRouter(
     prefix="/papers",
@@ -94,6 +97,48 @@ class WritingSubmitRequest(BaseModel):
     assignment_id: Optional[int] = None
     strictness: Optional[str] = "moderate"
     responses: List[WritingResponseItem]
+
+
+class ListeningQuestionCreate(BaseModel):
+    question_text: str
+    question_type: str
+    options: Optional[List[str]] = None
+    correct_answer: Optional[str] = None
+
+
+class ListeningPaperCreate(BaseModel):
+    title: str
+    transcript: Optional[str] = None
+    audio_url: Optional[str] = None
+    role_script: Optional[List[Dict[str, str]]] = None
+    questions: List[ListeningQuestionCreate] = []
+    show_answers: Optional[bool] = True
+
+
+class ListeningScriptGenerateRequest(BaseModel):
+    prompt: str
+    question_count: Optional[int] = 5
+
+
+class SpeakingPaperCreate(BaseModel):
+    title: str
+    scenario: str
+    examiner_persona: Optional[str] = "Friendly examiner"
+    starter_prompt: Optional[str] = "Let's begin. Please introduce yourself."
+    max_turns: Optional[int] = 12
+    rubric_weights: Optional[Dict[str, float]] = None
+    show_answers: Optional[bool] = True
+
+
+class SpeakingSessionStartRequest(BaseModel):
+    assignment_id: Optional[int] = None
+    max_context_tokens: Optional[int] = 1200
+
+
+class SpeakingTurnRequest(BaseModel):
+    role: str
+    text: str
+    audio_url: Optional[str] = None
 
 # Strict objective types - require exact match
 STRICT_OBJECTIVE_TYPES = {
@@ -299,6 +344,7 @@ def generate_questions(request: GenerateRequest, current_user: User = Depends(ge
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+@router.post("")
 @router.post("/")
 def create_paper(paper: PaperCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     if current_user.role != "teacher" and current_user.role != "admin":
@@ -660,6 +706,474 @@ def submit_writing_paper(
         "score": submission.score,
     }
 
+
+@router.post("/listening")
+def create_listening_paper(
+    payload: ListeningPaperCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.role not in {"teacher", "admin"}:
+        raise HTTPException(status_code=403, detail="Only teachers can create listening papers")
+
+    paper = Paper(
+        title=payload.title,
+        article_content=payload.transcript,
+        created_by=current_user.id,
+        show_answers=payload.show_answers if payload.show_answers is not None else True,
+        paper_type="listening",
+        writing_config={
+            "audio_url": payload.audio_url,
+            "role_script": payload.role_script or [],
+            "source": "listening",
+        },
+    )
+    db.add(paper)
+    db.commit()
+    db.refresh(paper)
+
+    for q in payload.questions:
+        db.add(Question(
+            paper_id=paper.id,
+            question_text=q.question_text,
+            question_type=q.question_type,
+            options=q.options,
+            correct_answer=q.correct_answer,
+        ))
+    db.commit()
+
+    return {"message": "Listening paper created", "paper_id": paper.id}
+
+
+@router.post("/listening/generate-script")
+def generate_listening_script(
+    payload: ListeningScriptGenerateRequest,
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.role not in {"teacher", "admin"}:
+        raise HTTPException(status_code=403, detail="Only teachers can generate listening script")
+
+    prompt = (payload.prompt or "").strip()
+    if not prompt:
+        raise HTTPException(status_code=400, detail="Prompt is required")
+
+    question_count = max(2, min(int(payload.question_count or 5), 10))
+
+    provider, model = _resolve_ai_config({
+        "ai_provider": current_user.ai_provider,
+        "ai_model": current_user.ai_model,
+    })
+
+    system_prompt = (
+        "You are an English HKDSE listening paper assistant. "
+        "Return strict JSON only. No markdown. Use English only."
+    )
+    user_prompt = (
+        "Generate a listening practice package in JSON with this exact schema:\n"
+        "{\n"
+        "  \"transcript\": \"...\",\n"
+        "  \"role_script\": [{\"role\": \"A\", \"text\": \"...\"}],\n"
+        "  \"questions\": [\n"
+        "    {\"question_text\": \"...\", \"question_type\": \"mcq\", \"options\": [\"...\"], \"correct_answer\": \"A\"}\n"
+        "  ]\n"
+        "}\n"
+        f"Need exactly {question_count} questions. Mix mcq and short. "
+        "For mcq, correct_answer must be a letter like A/B/C/D. "
+        f"Topic/context: {prompt}"
+    )
+
+    fallback_payload = {
+        "transcript": f"A: Hello. We are discussing {prompt}. B: Great, let's begin.",
+        "role_script": [
+            {"role": "A", "text": f"Hello, today we are discussing {prompt}."},
+            {"role": "B", "text": "Great, let's begin the conversation."},
+        ],
+        "questions": [
+            {
+                "question_text": "What are the speakers doing?",
+                "question_type": "mcq",
+                "options": ["Introducing a topic", "Ordering food", "Checking homework", "Booking a flight"],
+                "correct_answer": "A",
+            },
+            {
+                "question_text": "Write one key topic mentioned.",
+                "question_type": "short",
+                "correct_answer": prompt,
+            },
+        ],
+    }
+
+    try:
+        raw = _call_chat(
+            provider=provider,
+            model=model,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            temperature=0.5,
+            max_tokens=1600,
+        )
+        text = (raw or "").strip()
+        if "```" in text:
+            text = re.sub(r"^```(?:json)?|```$", "", text.strip(), flags=re.MULTILINE).strip()
+
+        parsed = json.loads(text)
+        transcript = str(parsed.get("transcript") or "").strip()
+        role_script = parsed.get("role_script") or []
+        questions = parsed.get("questions") or []
+
+        if not transcript:
+            raise ValueError("Missing transcript")
+        if not isinstance(role_script, list) or not role_script:
+            raise ValueError("Missing role_script")
+        if not isinstance(questions, list) or not questions:
+            raise ValueError("Missing questions")
+
+        normalized_questions = []
+        for q in questions[:question_count]:
+            q_type = str(q.get("question_type") or "short").strip().lower()
+            q_text = str(q.get("question_text") or "").strip()
+            if not q_text:
+                continue
+            options = q.get("options") if isinstance(q.get("options"), list) else None
+            correct = q.get("correct_answer")
+            if q_type == "mcq" and isinstance(correct, str):
+                match = re.match(r"\s*([A-Da-d])", correct)
+                correct = match.group(1).upper() if match else correct
+            normalized_questions.append({
+                "question_text": q_text,
+                "question_type": q_type,
+                "options": options,
+                "correct_answer": correct,
+            })
+
+        if not normalized_questions:
+            raise ValueError("No valid questions generated")
+
+        return {
+            "transcript": transcript,
+            "role_script": [
+                {
+                    "role": str(item.get("role") or "A").strip(),
+                    "text": str(item.get("text") or "").strip(),
+                }
+                for item in role_script
+                if str(item.get("text") or "").strip()
+            ],
+            "questions": normalized_questions,
+            "provider": provider,
+            "model": model,
+        }
+    except Exception:
+        return {
+            **fallback_payload,
+            "provider": provider,
+            "model": model,
+        }
+
+
+@router.put("/listening/{paper_id}")
+def update_listening_paper(
+    paper_id: int,
+    payload: ListeningPaperCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    paper = db.query(Paper).filter(Paper.id == paper_id).first()
+    if not paper:
+        raise HTTPException(status_code=404, detail="Paper not found")
+    if paper.paper_type != "listening":
+        raise HTTPException(status_code=400, detail="Not a listening paper")
+    if current_user.role == "teacher" and paper.created_by != current_user.id:
+        raise HTTPException(status_code=403, detail="Not your paper")
+
+    paper.title = payload.title
+    paper.article_content = payload.transcript
+    paper.show_answers = payload.show_answers if payload.show_answers is not None else True
+    paper.writing_config = {
+        "audio_url": payload.audio_url,
+        "role_script": payload.role_script or [],
+        "source": "listening",
+    }
+
+    existing_questions = db.query(Question).filter(Question.paper_id == paper_id).all()
+    for q in existing_questions:
+        db.delete(q)
+    db.flush()
+
+    for q in payload.questions:
+        db.add(Question(
+            paper_id=paper.id,
+            question_text=q.question_text,
+            question_type=q.question_type,
+            options=q.options,
+            correct_answer=q.correct_answer,
+        ))
+
+    db.commit()
+    return {"message": "Listening paper updated", "paper_id": paper.id}
+
+
+@router.post("/speaking")
+def create_speaking_paper(
+    payload: SpeakingPaperCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.role not in {"teacher", "admin"}:
+        raise HTTPException(status_code=403, detail="Only teachers can create speaking papers")
+
+    rubric = payload.rubric_weights or {
+        "fluency": 0.35,
+        "relevance": 0.35,
+        "organization": 0.30,
+    }
+    paper = Paper(
+        title=payload.title,
+        article_content=payload.scenario,
+        created_by=current_user.id,
+        show_answers=payload.show_answers if payload.show_answers is not None else True,
+        paper_type="speaking",
+        writing_config={
+            "scenario": payload.scenario,
+            "examiner_persona": payload.examiner_persona,
+            "starter_prompt": payload.starter_prompt,
+            "max_turns": payload.max_turns,
+            "rubric_weights": rubric,
+            "source": "speaking",
+        },
+    )
+    db.add(paper)
+    db.commit()
+    db.refresh(paper)
+
+    return {"message": "Speaking paper created", "paper_id": paper.id}
+
+
+@router.put("/speaking/{paper_id}")
+def update_speaking_paper(
+    paper_id: int,
+    payload: SpeakingPaperCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    paper = db.query(Paper).filter(Paper.id == paper_id).first()
+    if not paper:
+        raise HTTPException(status_code=404, detail="Paper not found")
+    if paper.paper_type != "speaking":
+        raise HTTPException(status_code=400, detail="Not a speaking paper")
+    if current_user.role == "teacher" and paper.created_by != current_user.id:
+        raise HTTPException(status_code=403, detail="Not your paper")
+
+    rubric = payload.rubric_weights or {
+        "fluency": 0.35,
+        "relevance": 0.35,
+        "organization": 0.30,
+    }
+    paper.title = payload.title
+    paper.article_content = payload.scenario
+    paper.show_answers = payload.show_answers if payload.show_answers is not None else True
+    paper.writing_config = {
+        "scenario": payload.scenario,
+        "examiner_persona": payload.examiner_persona,
+        "starter_prompt": payload.starter_prompt,
+        "max_turns": payload.max_turns,
+        "rubric_weights": rubric,
+        "source": "speaking",
+    }
+    db.commit()
+    return {"message": "Speaking paper updated", "paper_id": paper.id}
+
+
+@router.post("/speaking/{paper_id}/sessions")
+def start_speaking_session(
+    paper_id: int,
+    payload: SpeakingSessionStartRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    paper = db.query(Paper).filter(Paper.id == paper_id).first()
+    if not paper:
+        raise HTTPException(status_code=404, detail="Paper not found")
+    if paper.paper_type != "speaking":
+        raise HTTPException(status_code=400, detail="Not a speaking paper")
+
+    if current_user.role not in {"student", "teacher", "admin"}:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    session = SpeakingSession(
+        paper_id=paper_id,
+        student_id=current_user.id,
+        assignment_id=payload.assignment_id,
+        max_context_tokens=payload.max_context_tokens or 1200,
+    )
+    db.add(session)
+    db.commit()
+    db.refresh(session)
+
+    starter_prompt = (paper.writing_config or {}).get("starter_prompt") or "Let's begin. Please introduce yourself."
+    starter_turn = SpeakingTurn(
+        session_id=session.id,
+        turn_index=1,
+        speaker_role="examiner",
+        text=starter_prompt,
+        token_estimate=estimate_tokens(starter_prompt),
+    )
+    db.add(starter_turn)
+    session.token_estimate = starter_turn.token_estimate
+    db.commit()
+
+    return {
+        "session_id": session.id,
+        "starter_prompt": starter_prompt,
+        "max_context_tokens": session.max_context_tokens,
+    }
+
+
+@router.post("/speaking/sessions/{session_id}/turns")
+def append_speaking_turn(
+    session_id: int,
+    payload: SpeakingTurnRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    session = db.query(SpeakingSession).filter(SpeakingSession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if current_user.role == "student" and session.student_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not your speaking session")
+
+    role = payload.role.strip().lower()
+    if role not in {"student", "examiner", "system"}:
+        raise HTTPException(status_code=400, detail="Invalid role")
+
+    turns = db.query(SpeakingTurn).filter(SpeakingTurn.session_id == session_id).order_by(SpeakingTurn.turn_index.asc()).all()
+    next_index = (turns[-1].turn_index + 1) if turns else 1
+    new_turn = SpeakingTurn(
+        session_id=session_id,
+        turn_index=next_index,
+        speaker_role=role,
+        text=payload.text,
+        audio_url=payload.audio_url,
+        token_estimate=estimate_tokens(payload.text),
+    )
+    db.add(new_turn)
+    db.flush()
+
+    paper = db.query(Paper).filter(Paper.id == session.paper_id).first()
+    active_turns = turns + [new_turn]
+
+    if role == "student":
+        scenario = (paper.writing_config or {}).get("scenario") if paper and paper.writing_config else (paper.article_content if paper else "")
+        persona = (paper.writing_config or {}).get("examiner_persona") if paper and paper.writing_config else "Friendly examiner"
+        recent_turns = "\n".join([
+            f"{t.speaker_role}: {t.text}" for t in active_turns[-6:]
+        ])
+        summary = session.summary_text or ""
+
+        provider, model = _resolve_ai_config({
+            "ai_provider": current_user.ai_provider,
+            "ai_model": current_user.ai_model,
+        })
+        system_prompt = (
+            "You are an English speaking examiner for students. "
+            "Use English only. Keep response concise (1-2 sentences), ask one follow-up question, and maintain scenario role."
+        )
+        user_prompt = (
+            f"Scenario: {scenario or 'General oral interview'}\n"
+            f"Examiner persona: {persona}\n"
+            f"Session summary: {summary}\n"
+            f"Recent dialogue:\n{recent_turns}\n\n"
+            "Now write the examiner's next turn only."
+        )
+        try:
+            examiner_text = _call_chat(
+                provider=provider,
+                model=model,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                temperature=0.4,
+                max_tokens=120,
+            ).strip()
+            if not examiner_text:
+                examiner_text = "Thanks. Could you tell me more about that?"
+        except Exception:
+            examiner_text = "Thanks. Could you tell me more about that?"
+
+        examiner_turn = SpeakingTurn(
+            session_id=session_id,
+            turn_index=next_index + 1,
+            speaker_role="examiner",
+            text=examiner_text,
+            token_estimate=estimate_tokens(examiner_text),
+        )
+        db.add(examiner_turn)
+        db.flush()
+        active_turns.append(examiner_turn)
+
+    live_text = " ".join([f"{t.speaker_role}: {t.text}" for t in active_turns if not t.is_compacted])
+    token_estimate_total = estimate_tokens(session.summary_text) + estimate_tokens(live_text)
+
+    if token_estimate_total > session.max_context_tokens and len(active_turns) > 4:
+        compact_candidates = [t for t in active_turns[:-3] if not t.is_compacted]
+        compressed_lines = [f"{t.speaker_role}: {t.text}" for t in compact_candidates]
+        session.summary_text = compress_dialogue(session.summary_text, compressed_lines)
+        for turn in compact_candidates:
+            turn.is_compacted = True
+        session.compaction_count = (session.compaction_count or 0) + 1
+
+        remaining_live = " ".join([f"{t.speaker_role}: {t.text}" for t in active_turns if not t.is_compacted])
+        token_estimate_total = estimate_tokens(session.summary_text) + estimate_tokens(remaining_live)
+
+    session.token_estimate = token_estimate_total
+    db.commit()
+    db.refresh(session)
+
+    return {
+        "session_id": session.id,
+        "turn_id": new_turn.id,
+        "turn_index": new_turn.turn_index,
+        "auto_reply_added": role == "student",
+        "token_estimate": session.token_estimate,
+        "compaction_count": session.compaction_count,
+    }
+
+
+@router.get("/speaking/sessions/{session_id}")
+def get_speaking_session(
+    session_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    session = db.query(SpeakingSession).filter(SpeakingSession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if current_user.role == "student" and session.student_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not your speaking session")
+
+    turns = db.query(SpeakingTurn).filter(SpeakingTurn.session_id == session_id).order_by(SpeakingTurn.turn_index.asc()).all()
+    return {
+        "id": session.id,
+        "paper_id": session.paper_id,
+        "student_id": session.student_id,
+        "status": session.status,
+        "summary_text": session.summary_text,
+        "token_estimate": session.token_estimate,
+        "max_context_tokens": session.max_context_tokens,
+        "compaction_count": session.compaction_count,
+        "turns": [
+            {
+                "id": t.id,
+                "turn_index": t.turn_index,
+                "speaker_role": t.speaker_role,
+                "text": t.text,
+                "audio_url": t.audio_url,
+                "is_compacted": t.is_compacted,
+            }
+            for t in turns
+        ],
+    }
+
+@router.get("")
 @router.get("/")
 def list_papers(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     # Students see papers assigned to them OR their classes
@@ -677,7 +1191,7 @@ def list_papers(db: Session = Depends(get_db), current_user: User = Depends(get_
              
         assignments = query.all()
         paper_ids = list({a.paper_id for a in assignments})
-        
+    
         if not paper_ids:
             return []
             
@@ -863,7 +1377,9 @@ def get_paper(
     return {
         "id": paper.id,
         "title": paper.title,
+        "paper_type": paper.paper_type,
         "article_content": paper.article_content,
+        "writing_config": paper.writing_config,
         "show_answers": paper.show_answers,
         "questions": questions_data,
         "assignment": assignment_info,

@@ -51,8 +51,20 @@ export default function StudentClassroom() {
       }
   };
 
-    const handleDownload = (doc: any) => {
-      window.open(`http://localhost:8000/documents/${doc.id}/download`, '_blank');
+    const handleDownload = async (doc: any) => {
+      try {
+        const response = await api.get(`/documents/${doc.id}/download`, { responseType: 'blob' });
+        const blobUrl = window.URL.createObjectURL(new Blob([response.data]));
+        const link = document.createElement('a');
+        link.href = blobUrl;
+        link.download = doc.title || doc.filename || `document-${doc.id}`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.URL.revokeObjectURL(blobUrl);
+      } catch (err) {
+        console.error('Failed to download document', err);
+      }
     };
 
   const selectedClass = classes.find(c => c.id === selectedClassId);

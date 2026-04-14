@@ -11,9 +11,11 @@ import {
     X,
     Check,
     PenTool,
+    Headphones,
+    Mic,
 } from 'lucide-react';
 
-type PaperType = 'reading' | 'writing';
+type PaperType = 'reading' | 'writing' | 'listening' | 'speaking';
 
 type Props = {
     paperType: PaperType;
@@ -128,7 +130,13 @@ export default function TeacherPaperManager({
     };
 
     const activePaperTitle = papers.find((paper) => paper.id === selectedPaper)?.title || 'Unknown Paper';
-    const ListIcon = paperType === 'writing' ? PenTool : FileText;
+    const ListIcon = paperType === 'writing'
+        ? PenTool
+        : paperType === 'listening'
+            ? Headphones
+            : paperType === 'speaking'
+                ? Mic
+                : FileText;
 
     return (
         <div className="min-h-screen bg-gray-50 p-8">

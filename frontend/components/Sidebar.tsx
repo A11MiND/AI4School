@@ -17,6 +17,7 @@ import {
   LogOut
 } from 'lucide-react';
 import axios from 'axios';
+import { API_BASE_URL } from '../utils/config';
 
 type MenuItem = {
   name: string;
@@ -45,7 +46,7 @@ const Sidebar = () => {
       if (!token) return;
       
       try {
-        const res = await axios.get('http://localhost:8000/users/me', {
+        const res = await axios.get(`${API_BASE_URL}/users/me`, {
             headers: { Authorization: `Bearer ${token}` }
         });
         setUser(res.data);
@@ -61,8 +62,8 @@ const Sidebar = () => {
     { name: 'My Classes', icon: BookOpen, path: '/student/classroom' },
     { name: 'Reading Papers', icon: FileText, path: '/student/paper/reading' },
     { name: 'Writing Papers', icon: PenTool, path: '/student/paper/writing' },
-    { name: 'Listening Papers', icon: Headphones, path: '/student/paper/listening', wip: true },
-    { name: 'Speaking Papers', icon: Mic, path: '/student/paper/speaking', wip: true },
+    { name: 'Listening Papers', icon: Headphones, path: '/student/paper/listening' },
+    { name: 'Speaking Papers', icon: Mic, path: '/student/paper/speaking' },
     { name: 'Reports', icon: BarChart2, path: '/student/report' },
     { name: 'Settings', icon: SettingsIcon, path: '/student/settings' },
   ] : [
@@ -71,8 +72,8 @@ const Sidebar = () => {
     { name: 'Content Library', icon: BookOpen, path: '/teacher/documents' },
     { name: 'Reading', icon: FileText, path: '/teacher/paper/reading' },
     { name: 'Writing', icon: PenTool, path: '/teacher/paper/writing' },
-    { name: 'Listening', icon: Headphones, path: '/teacher/paper/listening', wip: true },
-    { name: 'Speaking', icon: Mic, path: '/teacher/paper/speaking', wip: true },
+    { name: 'Listening', icon: Headphones, path: '/teacher/paper/listening' },
+    { name: 'Speaking', icon: Mic, path: '/teacher/paper/speaking' },
     { name: 'Report', icon: BarChart2, path: '/teacher/analytics' }, 
     { name: 'Settings', icon: SettingsIcon, path: '/teacher/settings' },
   ];
@@ -166,7 +167,7 @@ const Sidebar = () => {
                     role === 'teacher' ? 'bg-emerald-100 border-emerald-200' : 'bg-indigo-100 border-indigo-200'
                 }`}>
                     {user.avatar_url ? (
-                        <img src={`http://localhost:8000/${user.avatar_url}`} alt="Avatar" className="w-full h-full object-cover" />
+                        <img src={`${API_BASE_URL}/${user.avatar_url}`} alt="Avatar" className="w-full h-full object-cover" />
                     ) : (
                         <UserIcon size={20} className={role === 'teacher' ? 'text-emerald-600' : 'text-indigo-600'} />
                     )}

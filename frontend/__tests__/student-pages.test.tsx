@@ -15,6 +15,12 @@ describe('Student pages', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     localStorage.clear();
+    if (!(URL as any).createObjectURL) {
+      (URL as any).createObjectURL = jest.fn(() => 'blob:mock-url');
+    }
+    if (!(URL as any).revokeObjectURL) {
+      (URL as any).revokeObjectURL = jest.fn();
+    }
     mockedApi.get.mockResolvedValue({ data: [] } as any);
     mockedApi.post.mockResolvedValue({ data: {} } as any);
     window.confirm = jest.fn().mockReturnValue(true);
@@ -174,11 +180,11 @@ describe('Student pages', () => {
 
     fireEvent.click(screen.getByText(/Root \/ \.{3}/i));
 
-    const openSpy = jest.spyOn(window, 'open').mockImplementation(() => null);
     const downloadButtons = document.querySelectorAll('button');
     fireEvent.click(downloadButtons[downloadButtons.length - 1]);
-    expect(openSpy).toHaveBeenCalled();
-    openSpy.mockRestore();
+    await waitFor(() => {
+      expect(mockedApi.get).toHaveBeenCalledWith('/documents/6/download', { responseType: 'blob' });
+    });
   });
 
   it('renders classroom empty state and handles document fetch error', async () => {
@@ -203,13 +209,18 @@ describe('Student pages', () => {
 
   it('downloads file when clicking file row', async () => {
     localStorage.setItem('student_token', 'token');
-    const openSpy = jest.spyOn(window, 'open').mockImplementation(() => null as any);
+    const createObjectURLMock = URL.createObjectURL as jest.Mock;
+    const revokeObjectURLMock = URL.revokeObjectURL as jest.Mock;
+    createObjectURLMock.mockReturnValue('blob:mock-url');
     mockedApi.get.mockImplementation((url: any) => {
       if (String(url).startsWith('/classes')) {
         return Promise.resolve({ data: [{ id: 1, name: 'Class 1', teacher_id: 10 }] } as any);
       }
-      if (String(url).startsWith('/documents')) {
+      if (String(url) === '/documents/') {
         return Promise.resolve({ data: [{ id: 2, title: 'File 1', is_folder: false, file_path: 'uploads/file.pdf' }] } as any);
+      }
+      if (String(url) === '/documents/2/download') {
+        return Promise.resolve({ data: new Blob(['content']) } as any);
       }
       return Promise.resolve({ data: [] } as any);
     });
@@ -219,8 +230,11 @@ describe('Student pages', () => {
     await waitFor(() => expect(screen.getByText('File 1')).toBeInTheDocument());
     fireEvent.click(screen.getByText('File 1'));
 
-    expect(openSpy).toHaveBeenCalledWith('http://localhost:8000/documents/2/download', '_blank');
-    openSpy.mockRestore();
+    await waitFor(() => {
+      expect(mockedApi.get).toHaveBeenCalledWith('/documents/2/download', { responseType: 'blob' });
+    });
+    expect(createObjectURLMock).toHaveBeenCalled();
+    expect(revokeObjectURLMock).toHaveBeenCalled();
   });
 
   it('handles class fetch error', async () => {

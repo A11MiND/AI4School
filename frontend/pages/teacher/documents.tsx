@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import api from '../../utils/api';
+import { API_BASE_URL } from '../../utils/config';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { FileText, Upload, Trash2, Folder, FolderPlus, ArrowLeft, ChevronRight, Home, Loader2, Download, FilePlus } from 'lucide-react';
@@ -257,7 +258,7 @@ export default function ContentLibrary() {
                             {documents.map((doc) => (
                                 <div key={doc.id} className="group relative bg-white border border-slate-200 rounded-xl p-4 hover:shadow-md transition-shadow cursor-default flex flex-col justify-between min-h-[192px] overflow-hidden">
                                      <div className="flex flex-col items-center flex-grow justify-center text-center cursor-pointer"
-                                         onClick={() => doc.is_folder ? navigateToFolder(doc) : (doc.file_path && window.open(`http://localhost:8000/${doc.file_path}`, '_blank'))}>
+                                         onClick={() => doc.is_folder ? navigateToFolder(doc) : (doc.file_path && window.open(`${API_BASE_URL}/${doc.file_path}`, '_blank'))}>
                                         <div className={`p-3 rounded-xl mb-3 ${doc.is_folder ? 'bg-amber-50 text-amber-500' : 'bg-blue-50 text-blue-500'}`}>
                                             {doc.is_folder ? <Folder size={32} /> : <FileText size={32} />}
                                         </div>

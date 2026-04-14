@@ -1,6 +1,9 @@
 from app.auth import jwt
 from app.models.user import User
 from app.models.document import Document
+from app.models.class_model import ClassModel
+from app.models.student_association import StudentClass
+from app.models.document_visibility import DocumentClassVisibility
 
 
 def auth_header(user):
@@ -102,3 +105,54 @@ def test_upload_blank_content_none(client, db_session, monkeypatch):
     res_doc = client.get(f"/documents/{doc_id}", headers=auth_header(teacher))
     assert res_doc.status_code == 200
     assert res_doc.json()["content"] is None
+
+
+def test_student_download_visible_document_allowed(client, db_session, tmp_path):
+    teacher = User(username="teacher_docs_dl", password_hash=jwt.get_password_hash("pass"), role="teacher")
+    student = User(username="student_docs_dl", password_hash=jwt.get_password_hash("pass"), role="student")
+    db_session.add_all([teacher, student])
+    db_session.commit()
+
+    class_row = ClassModel(name="Class A", teacher_id=teacher.id)
+    db_session.add(class_row)
+    db_session.commit()
+
+    db_session.add(StudentClass(user_id=student.id, class_id=class_row.id))
+    db_session.commit()
+
+    file_path = tmp_path / "doc.txt"
+    file_path.write_text("hello", encoding="utf-8")
+
+    doc = Document(title="Doc", is_folder=False, uploaded_by=teacher.id, file_path=str(file_path))
+    db_session.add(doc)
+    db_session.commit()
+
+    db_session.add(DocumentClassVisibility(document_id=doc.id, class_id=class_row.id, visible=True))
+    db_session.commit()
+
+    res = client.get(f"/documents/{doc.id}/download", headers=auth_header(student))
+    assert res.status_code == 200
+
+
+def test_student_download_without_visibility_forbidden(client, db_session, tmp_path):
+    teacher = User(username="teacher_docs_forbid", password_hash=jwt.get_password_hash("pass"), role="teacher")
+    student = User(username="student_docs_forbid", password_hash=jwt.get_password_hash("pass"), role="student")
+    db_session.add_all([teacher, student])
+    db_session.commit()
+
+    class_row = ClassModel(name="Class B", teacher_id=teacher.id)
+    db_session.add(class_row)
+    db_session.commit()
+
+    db_session.add(StudentClass(user_id=student.id, class_id=class_row.id))
+    db_session.commit()
+
+    file_path = tmp_path / "doc2.txt"
+    file_path.write_text("secret", encoding="utf-8")
+
+    doc = Document(title="Doc2", is_folder=False, uploaded_by=teacher.id, file_path=str(file_path))
+    db_session.add(doc)
+    db_session.commit()
+
+    res = client.get(f"/documents/{doc.id}/download", headers=auth_header(student))
+    assert res.status_code == 403

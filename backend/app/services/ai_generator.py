@@ -5,6 +5,13 @@ from typing import Dict, List, Optional, Tuple
 import requests
 from openai import OpenAI
 
+QWEN_NON_CHAT_MODELS = {
+    "qwen3-tts-instruct-flash",
+    "qwen3-livetranslate-flash",
+    "fun-asr",
+    "paraformer-v2",
+}
+
 def _env(name: str, default: Optional[str] = None) -> Optional[str]:
     return os.getenv(name, default)
 
@@ -87,26 +94,37 @@ def _resolve_ai_config(options: Optional[Dict[str, object]]) -> Tuple[str, str]:
         provider = options.get("ai_provider") or provider
         model = options.get("ai_model") or ""
 
+    if provider == "openrouter":
+        return provider, model or (_env("OPENROUTER_MODEL", "openai/gpt-audio-mini") or "openai/gpt-audio-mini")
     if provider == "qwen":
-        return provider, model or (_env("QWEN_MODEL", "qwen-plus") or "qwen-plus")
+        resolved_model = model or (_env("QWEN_MODEL", "qwen-plus") or "qwen-plus")
+        if resolved_model in QWEN_NON_CHAT_MODELS:
+            # These are speech/ASR-oriented IDs and are not valid for text chat completions.
+            resolved_model = _env("QWEN_CHAT_FALLBACK_MODEL", "qwen-plus") or "qwen-plus"
+        return provider, resolved_model
     if provider == "gemini":
         return provider, model or (_env("VERTEX_MODEL", "gemini-1.5-pro") or "gemini-1.5-pro")
     return "deepseek", model or (_env("DEEPSEEK_MODEL", "deepseek-chat") or "deepseek-chat")
 
-def _get_openai_client(provider: str) -> OpenAI:
+def _get_openai_client(provider: str, api_key: Optional[str] = None, base_url: Optional[str] = None) -> OpenAI:
+    if provider == "openrouter":
+        resolved_api_key = (api_key or _env("OPENROUTER_API_KEY") or "").strip()
+        if not resolved_api_key:
+            raise ValueError("OPENROUTER_API_KEY not configured")
+        resolved_base_url = (base_url or _env("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1") or "https://openrouter.ai/api/v1").strip()
+        return OpenAI(api_key=resolved_api_key, base_url=resolved_base_url)
+
     if provider == "qwen":
-        api_key = _env("QWEN_API_KEY")
-        if not api_key:
+        resolved_api_key = (api_key or _env("QWEN_API_KEY") or "").strip()
+        if not resolved_api_key:
             raise ValueError("QWEN_API_KEY not configured")
-        api_key = api_key.strip()  # Ensure no whitespace
-        base_url = _env("QWEN_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
-        return OpenAI(api_key=api_key, base_url=base_url)
-    api_key = _env("DEEPSEEK_API_KEY")
-    if not api_key:
+        resolved_base_url = (base_url or _env("QWEN_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1") or "https://dashscope.aliyuncs.com/compatible-mode/v1").strip()
+        return OpenAI(api_key=resolved_api_key, base_url=resolved_base_url)
+    resolved_api_key = (api_key or _env("DEEPSEEK_API_KEY") or "").strip()
+    if not resolved_api_key:
         raise ValueError("DEEPSEEK_API_KEY not configured")
-    api_key = api_key.strip()  # Ensure no whitespace
-    base_url = _env("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
-    return OpenAI(api_key=api_key, base_url=base_url)
+    resolved_base_url = (base_url or _env("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1") or "https://api.deepseek.com/v1").strip()
+    return OpenAI(api_key=resolved_api_key, base_url=resolved_base_url)
 
 def _get_vertex_credentials():
     service_json = _env("VERTEX_SERVICE_ACCOUNT_JSON")
@@ -160,11 +178,20 @@ def _call_vertex_gemini(system_prompt: str, user_prompt: str, model: str, temper
     parts = candidates[0].get("content", {}).get("parts", [])
     return "".join([p.get("text", "") for p in parts])
 
-def _call_chat(provider: str, model: str, system_prompt: str, user_prompt: str, temperature: float, max_tokens: int) -> str:
+def _call_chat(
+    provider: str,
+    model: str,
+    system_prompt: str,
+    user_prompt: str,
+    temperature: float,
+    max_tokens: int,
+    api_key: Optional[str] = None,
+    base_url: Optional[str] = None,
+) -> str:
     if provider == "gemini":
         return _call_vertex_gemini(system_prompt, user_prompt, model, temperature, max_tokens)
 
-    client = _get_openai_client(provider)
+    client = _get_openai_client(provider, api_key=api_key, base_url=base_url)
     response = client.chat.completions.create(
         model=model,
         messages=[

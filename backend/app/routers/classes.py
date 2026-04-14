@@ -19,6 +19,7 @@ class ClassCreate(BaseModel):
 class StudentAdd(BaseModel):
     username: str
 
+@router.get("")
 @router.get("/")
 def list_classes(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     # Teachers see their own classes
@@ -32,6 +33,7 @@ def list_classes(db: Session = Depends(get_db), current_user: User = Depends(get
     # Admin sees all (or logic can vary)
     return db.query(ClassModel).all()
 
+@router.post("")
 @router.post("/")
 def create_class(class_data: ClassCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     if current_user.role != "teacher" and current_user.role != "admin":

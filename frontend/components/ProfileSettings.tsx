@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { User as UserIcon, Camera, Save, Lock, CheckCircle } from 'lucide-react';
+import { API_BASE_URL } from '../utils/config';
 
 interface ProfileSettingsProps {
   role: 'student' | 'teacher';
@@ -31,13 +32,18 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role }) => {
     password: '',
     confirm_password: '',
     ai_provider: 'deepseek',
-    ai_model: 'deepseek-chat'
+    ai_model: 'deepseek-chat',
+    qwen_api_key: '',
+    qwen_base_url: 'https://cn-hongkong.dashscope.aliyuncs.com/compatible-mode/v1',
+    openrouter_api_key: '',
+    openrouter_base_url: 'https://openrouter.ai/api/v1'
   });
 
   const providerOptions = [
     { value: 'deepseek', label: 'DeepSeek' },
     { value: 'qwen', label: 'Qwen' },
-    { value: 'gemini', label: 'Gemini (Vertex)' }
+    { value: 'gemini', label: 'Gemini (Vertex)' },
+    { value: 'openrouter', label: 'OpenRouter' }
   ];
 
   const modelOptions: Record<string, string[]> = {
@@ -46,17 +52,30 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role }) => {
       'qwen-plus',
       'qwen3-max',
       'qwen-flash',
-      'qwen-turbo'
+      'qwen-turbo',
+      'qwen3-tts-instruct-flash',
+      'qwen3-livetranslate-flash',
+      'fun-asr',
+      'paraformer-v2'
     ],
     gemini: [
       'gemini-2.5-flash-lite',
       'gemini-2.5-flash',
       'gemini-2.5-pro',
+    ],
+    openrouter: [
+      'openai/gpt-audio-mini',
+      'qwen/qwen3-8b',
+      'openrouter/auto'
     ]
   };
 
   const getToken = () => localStorage.getItem(role === 'student' ? 'student_token' : 'teacher_token');
   const getStoredProvider = () => localStorage.getItem('ai_provider') || 'deepseek';
+  const getStoredQwenKey = () => localStorage.getItem('qwen_api_key') || '';
+  const getStoredQwenBase = () => localStorage.getItem('qwen_base_url') || 'https://cn-hongkong.dashscope.aliyuncs.com/compatible-mode/v1';
+  const getStoredOpenRouterKey = () => localStorage.getItem('openrouter_api_key') || '';
+  const getStoredOpenRouterBase = () => localStorage.getItem('openrouter_base_url') || 'https://openrouter.ai/api/v1';
   const getStoredModel = (provider: string) => {
     const stored = localStorage.getItem('ai_model');
     if (stored && modelOptions[provider]?.includes(stored)) {
@@ -70,7 +89,7 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role }) => {
     const token = getToken();
     if (!token) return;
     try {
-      const res = await axios.get('http://localhost:8000/users/me', {
+      const res = await axios.get(`${API_BASE_URL}/users/me`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       setUser(res.data);
@@ -79,7 +98,9 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role }) => {
         full_name: res.data.full_name || '',
         username: res.data.username || '',
         password: '',
-        confirm_password: ''
+        confirm_password: '',
+        ai_provider: res.data.ai_provider || prev.ai_provider,
+        ai_model: res.data.ai_model || prev.ai_model,
       }));
     } catch (err) {
       console.error("Failed to fetch profile", err);
@@ -94,7 +115,11 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role }) => {
     setFormData(prev => ({
       ...prev,
       ai_provider: provider,
-      ai_model: model
+      ai_model: model,
+      qwen_api_key: getStoredQwenKey(),
+      qwen_base_url: getStoredQwenBase(),
+      openrouter_api_key: getStoredOpenRouterKey(),
+      openrouter_base_url: getStoredOpenRouterBase(),
     }));
     fetchProfile();
   }, [role]);
@@ -113,7 +138,7 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role }) => {
 
     try {
       setMessage(null);
-      await axios.post('http://localhost:8000/users/me/avatar', formData, {
+      await axios.post(`${API_BASE_URL}/users/me/avatar`, formData, {
         headers: { 
           Authorization: `Bearer ${token}`,
           'Content-Type': 'multipart/form-data'
@@ -140,15 +165,27 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role }) => {
     try {
       const payload: any = {
         full_name: formData.full_name,
-        username: formData.username
+        username: formData.username,
+        ai_provider: formData.ai_provider,
+        ai_model: formData.ai_model,
       };
       if (formData.password) {
         payload.password = formData.password;
       }
 
-      await axios.put('http://localhost:8000/users/me', payload, {
+      await axios.put(`${API_BASE_URL}/users/me`, payload, {
         headers: { Authorization: `Bearer ${token}` }
       });
+      localStorage.setItem('ai_provider', formData.ai_provider);
+      localStorage.setItem('ai_model', formData.ai_model);
+      localStorage.setItem('qwen_base_url', formData.qwen_base_url);
+      if (formData.qwen_api_key) {
+        localStorage.setItem('qwen_api_key', formData.qwen_api_key);
+      }
+      localStorage.setItem('openrouter_base_url', formData.openrouter_base_url);
+      if (formData.openrouter_api_key) {
+        localStorage.setItem('openrouter_api_key', formData.openrouter_api_key);
+      }
       setMessage({ type: 'success', text: 'Profile updated successfully!' });
       fetchProfile(); // Refresh data
     } catch (err: any) {
@@ -169,9 +206,19 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role }) => {
       return;
     }
     try {
-      const res = await axios.post('http://localhost:8000/users/test-connection', {
+      const res = await axios.post(`${API_BASE_URL}/users/test-connection`, {
         ai_provider: formData.ai_provider,
-        ai_model: formData.ai_model
+        ai_model: formData.ai_model,
+        api_key: formData.ai_provider === 'openrouter'
+          ? formData.openrouter_api_key || undefined
+          : formData.ai_provider === 'qwen'
+            ? formData.qwen_api_key || undefined
+            : undefined,
+        base_url: formData.ai_provider === 'openrouter'
+          ? formData.openrouter_base_url || undefined
+          : formData.ai_provider === 'qwen'
+            ? formData.qwen_base_url || undefined
+            : undefined,
       }, {
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -211,7 +258,7 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role }) => {
             <div className="relative group cursor-pointer" onClick={handleAvatarClick}>
               <div className={`w-32 h-32 rounded-full overflow-hidden border-4 ${role === 'teacher' ? 'border-emerald-100' : 'border-indigo-100'} bg-slate-50`}>
                 {user?.avatar_url ? (
-                  <img src={`http://localhost:8000/${user.avatar_url}`} alt="Avatar" className="w-full h-full object-cover" />
+                  <img src={`${API_BASE_URL}/${user.avatar_url}`} alt="Avatar" className="w-full h-full object-cover" />
                 ) : (
                   <div className="w-full h-full flex items-center justify-center text-slate-300">
                     <UserIcon size={64} />
@@ -299,6 +346,58 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role }) => {
                     </p>
                   </div>
                 </div>
+
+                {formData.ai_provider === 'openrouter' && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-4">
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-2">OpenRouter API Key</label>
+                      <input
+                        type="password"
+                        value={formData.openrouter_api_key}
+                        onChange={e => setFormData({ ...formData, openrouter_api_key: e.target.value })}
+                        className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
+                        placeholder="sk-or-v1-..."
+                      />
+                      <p className="mt-1 text-xs text-gray-500">仅用于当前设备测试连接；保存后会留在本地浏览器。</p>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-2">OpenRouter Base URL</label>
+                      <input
+                        type="text"
+                        value={formData.openrouter_base_url}
+                        onChange={e => setFormData({ ...formData, openrouter_base_url: e.target.value })}
+                        className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
+                        placeholder="https://openrouter.ai/api/v1"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {formData.ai_provider === 'qwen' && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-4">
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-2">Qwen API Key</label>
+                      <input
+                        type="password"
+                        value={formData.qwen_api_key}
+                        onChange={e => setFormData({ ...formData, qwen_api_key: e.target.value })}
+                        className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
+                        placeholder="sk-..."
+                      />
+                      <p className="mt-1 text-xs text-gray-500">仅用于当前设备测试连接；保存后会留在本地浏览器。</p>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-2">Qwen Base URL</label>
+                      <input
+                        type="text"
+                        value={formData.qwen_base_url}
+                        onChange={e => setFormData({ ...formData, qwen_base_url: e.target.value })}
+                        className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
+                        placeholder="https://cn-hongkong.dashscope.aliyuncs.com/compatible-mode/v1"
+                      />
+                    </div>
+                  </div>
+                )}
 
                 <div className="md:col-span-2 flex items-center mt-2">
                   <button

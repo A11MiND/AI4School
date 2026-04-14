@@ -14,7 +14,7 @@ router = APIRouter(
     tags=["users"]
 )
 
-ALLOWED_AI_PROVIDERS = {"deepseek", "qwen", "gemini"}
+ALLOWED_AI_PROVIDERS = {"deepseek", "qwen", "gemini", "openrouter"}
 
 class UserProfileUpdate(BaseModel):
     username: Optional[str] = None
@@ -26,6 +26,8 @@ class UserProfileUpdate(BaseModel):
 class TestAIConnectionRequest(BaseModel):
     ai_provider: str
     ai_model: Optional[str] = None
+    api_key: Optional[str] = None
+    base_url: Optional[str] = None
 
 @router.get("/me")
 def get_current_user_profile(current_user: User = Depends(get_current_user)):
@@ -133,7 +135,9 @@ def test_ai_connection(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             temperature=0.1,
-            max_tokens=10
+            max_tokens=10,
+            api_key=req.api_key,
+            base_url=req.base_url,
         )
         return {"status": "success", "message": response.strip(), "provider": provider, "model": model}
     except Exception as e:

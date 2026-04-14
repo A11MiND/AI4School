@@ -155,6 +155,7 @@ async def upload_document(
     
     return {"message": "Document uploaded successfully", "id": new_doc.id}
 
+@router.get("", response_model=List[DocumentResponse])
 @router.get("/", response_model=List[DocumentResponse])
 def list_documents(
     parent_id: Optional[int] = None,
@@ -316,10 +317,18 @@ def download_document(doc_id: int, db: Session = Depends(get_db), current_user: 
     doc = db.query(Document).filter(Document.id == doc_id).first()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
-        
-    if current_user.role != "teacher" and current_user.role != "admin":
-         if doc.uploaded_by != current_user.id:
-             raise HTTPException(status_code=403, detail="Not authorized")
+
+    if current_user.role not in {"teacher", "admin"}:
+        visible_for_student = db.query(DocumentClassVisibility).join(
+            StudentClass,
+            StudentClass.class_id == DocumentClassVisibility.class_id,
+        ).filter(
+            DocumentClassVisibility.document_id == doc.id,
+            DocumentClassVisibility.visible == True,
+            StudentClass.user_id == current_user.id,
+        ).first()
+        if visible_for_student is None:
+            raise HTTPException(status_code=403, detail="Not authorized")
 
     if not doc.file_path or not os.path.exists(doc.file_path):
         raise HTTPException(status_code=404, detail="File not found on server")

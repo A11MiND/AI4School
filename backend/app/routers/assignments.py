@@ -6,6 +6,8 @@ from ..database import get_db
 from ..models.assignment import Assignment
 from ..models.user import User
 from ..models.class_model import ClassModel
+from ..models.paper import Paper
+from ..models.student_association import StudentClass
 from ..auth.jwt import get_current_user
 
 router = APIRouter(
@@ -21,6 +23,53 @@ class AssignmentCreate(BaseModel):
     duration_minutes: Optional[int] = None
     max_attempts: Optional[int] = 1
 
+
+@router.get("")
+@router.get("/")
+def list_assignments(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    if current_user.role in ["teacher", "admin"]:
+        query = db.query(Assignment)
+        if current_user.role == "teacher":
+            query = query.join(Paper, Paper.id == Assignment.paper_id).filter(Paper.created_by == current_user.id)
+        assignments = query.order_by(Assignment.assigned_at.desc()).all()
+    else:
+        class_ids = [
+            class_id
+            for (class_id,) in db.query(StudentClass.class_id)
+            .filter(StudentClass.user_id == current_user.id)
+            .all()
+        ]
+        query = db.query(Assignment)
+        if class_ids:
+            query = query.filter((Assignment.student_id == current_user.id) | (Assignment.class_id.in_(class_ids)))
+        else:
+            query = query.filter(Assignment.student_id == current_user.id)
+        assignments = query.order_by(Assignment.assigned_at.desc()).all()
+
+    result = []
+    for a in assignments:
+        item = {
+            "id": a.id,
+            "paper_id": a.paper_id,
+            "assigned_at": a.assigned_at,
+            "deadline": a.deadline,
+            "duration_minutes": a.duration_minutes,
+            "max_attempts": a.max_attempts,
+            "target_name": "Unknown",
+        }
+        if a.class_id:
+            cls = db.query(ClassModel).filter(ClassModel.id == a.class_id).first()
+            item["target_name"] = f"Class: {cls.name}" if cls else "Unknown Class"
+            item["type"] = "class"
+        elif a.student_id:
+            stu = db.query(User).filter(User.id == a.student_id).first()
+            item["target_name"] = f"Student: {stu.username}" if stu else "Unknown Student"
+            item["type"] = "student"
+        result.append(item)
+
+    return result
+
+@router.post("")
 @router.post("/")
 def create_assignment(data: AssignmentCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     if current_user.role != "teacher" and current_user.role != "admin":

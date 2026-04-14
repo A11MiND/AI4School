@@ -22,6 +22,8 @@ import StudentHome from '../pages/student/home';
 import StudentClassroom from '../pages/student/classroom';
 import StudentPaper from '../pages/student/paper/[id]';
 import StudentReading from '../pages/student/paper/reading';
+import StudentListening from '../pages/student/paper/listening';
+import StudentSpeaking from '../pages/student/paper/speaking';
 import StudentSubmission from '../pages/student/submission/[id]';
 import StudentReport from '../pages/student/report';
 import StudentSettings from '../pages/student/settings';
@@ -183,6 +185,8 @@ describe('Page smoke tests', () => {
 
   it('renders student reading practice, report, and settings', async () => {
     render(<StudentReading />);
+    render(<StudentListening />);
+    render(<StudentSpeaking />);
     render(<StudentReport />);
     render(<StudentSettings />);
     await waitFor(() => expect(screen.getByText(/Learning Report/i)).toBeInTheDocument());

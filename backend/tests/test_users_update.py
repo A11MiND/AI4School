@@ -33,3 +33,32 @@ def test_update_user_username_success(client, db_session):
     )
     assert res.status_code == 200
     assert res.json()["username"] == "user_new"
+
+
+def test_teacher_can_set_openrouter_provider(client, db_session):
+    user = User(username="teacher_openrouter", password_hash=jwt.get_password_hash("pass"), role="teacher")
+    db_session.add(user)
+    db_session.commit()
+
+    res = client.put(
+        "/users/me",
+        headers=auth_header(user),
+        json={"ai_provider": "openrouter", "ai_model": "openai/gpt-audio-mini"}
+    )
+    assert res.status_code == 200
+    payload = res.json()
+    assert payload["ai_provider"] == "openrouter"
+    assert payload["ai_model"] == "openai/gpt-audio-mini"
+
+
+def test_student_cannot_set_ai_provider(client, db_session):
+    user = User(username="student_no_ai", password_hash=jwt.get_password_hash("pass"), role="student")
+    db_session.add(user)
+    db_session.commit()
+
+    res = client.put(
+        "/users/me",
+        headers=auth_header(user),
+        json={"ai_provider": "openrouter"}
+    )
+    assert res.status_code == 403
