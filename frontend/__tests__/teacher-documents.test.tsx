@@ -12,6 +12,7 @@ describe('Teacher documents page', () => {
   beforeEach(() => {
     mockedApi.get.mockReset();
     mockedApi.post.mockReset();
+    mockedApi.patch.mockReset();
     mockedApi.delete.mockReset();
     window.confirm = jest.fn().mockImplementation(() => true);
     window.alert = jest.fn();
@@ -273,5 +274,39 @@ describe('Teacher documents page', () => {
 
     await waitFor(() => expect(screen.getByText('No Date')).toBeInTheDocument());
     expect(screen.getByText('Unknown Date')).toBeInTheDocument();
+  });
+
+  it('renames and moves a document item', async () => {
+    __setRouter({ pathname: '/teacher/documents', push: jest.fn() });
+    mockedApi.get.mockImplementation((url: any) => {
+      if (url === '/classes/') {
+        return Promise.resolve({ data: [{ id: 1, name: 'Class 1' }] } as any);
+      }
+      if (url === '/documents/folders') {
+        return Promise.resolve({ data: [{ id: 9, title: 'Target Folder' }] } as any);
+      }
+      return Promise.resolve({
+        data: [{ id: 3, title: 'Doc Move', is_folder: false, created_at: new Date().toISOString(), parent_id: null }]
+      } as any);
+    });
+    mockedApi.patch.mockResolvedValue({ data: {} } as any);
+    mockedApi.post.mockResolvedValue({ data: {} } as any);
+
+    render(<TeacherDocuments />);
+
+    await waitFor(() => expect(screen.getByText('Doc Move')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByTitle('Rename'));
+    fireEvent.change(screen.getByDisplayValue('Doc Move'), { target: { value: 'Doc Moved Name' } });
+    fireEvent.click(screen.getByRole('button', { name: /Save/i }));
+
+    await waitFor(() => expect(mockedApi.patch).toHaveBeenCalledWith('/documents/3', { title: 'Doc Moved Name' }));
+
+    fireEvent.click(screen.getByTitle('Move'));
+    await waitFor(() => expect(mockedApi.get).toHaveBeenCalledWith('/documents/folders'));
+    fireEvent.change(screen.getByDisplayValue('Root'), { target: { value: '9' } });
+    fireEvent.click(screen.getAllByRole('button', { name: /^Move$/i })[1]);
+
+    await waitFor(() => expect(mockedApi.post).toHaveBeenCalledWith('/documents/3/move', { parent_id: 9 }));
   });
 });

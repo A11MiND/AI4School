@@ -40,6 +40,14 @@ class DocumentResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+
+class DocumentRenameRequest(BaseModel):
+    title: str
+
+
+class DocumentMoveRequest(BaseModel):
+    parent_id: Optional[int] = None
+
 def extract_text_from_file(file_content: bytes, filename: str) -> str:
     text = ""
     if filename.endswith(".pdf"):
@@ -117,6 +125,7 @@ def create_folder(
 async def upload_document(
     file: UploadFile = File(...), 
     parent_id: Optional[int] = Form(None),
+    display_name: Optional[str] = Form(None),
     db: Session = Depends(get_db), 
     current_user: User = Depends(get_current_user)
 ):
@@ -143,7 +152,7 @@ async def upload_document(
         extracted_text = None
     
     new_doc = Document(
-        title=file.filename,
+        title=(display_name.strip() if display_name and display_name.strip() else file.filename),
         content=extracted_text,
         file_path=file_path, # Add path
         uploaded_by=current_user.id,
@@ -218,6 +227,80 @@ def get_document(document_id: int, db: Session = Depends(get_db), current_user: 
      if not doc:
          raise HTTPException(status_code=404, detail="Document not found")
      return doc
+
+
+def _ensure_document_access(doc: Document, current_user: User):
+    if current_user.role == "admin":
+        return
+    if current_user.role == "teacher" and doc.uploaded_by == current_user.id:
+        return
+    raise HTTPException(status_code=403, detail="Not authorized")
+
+
+@router.get("/folders", response_model=List[DocumentResponse])
+def list_folders(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    if current_user.role not in {"teacher", "admin"}:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    query = db.query(Document).filter(Document.is_deleted == False, Document.is_folder == True)
+    if current_user.role == "teacher":
+        query = query.filter(Document.uploaded_by == current_user.id)
+    return query.order_by(Document.created_at.asc()).all()
+
+
+@router.patch("/{document_id}")
+def rename_document(
+    document_id: int,
+    payload: DocumentRenameRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    doc = db.query(Document).filter(Document.id == document_id, Document.is_deleted == False).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    _ensure_document_access(doc, current_user)
+
+    title = (payload.title or "").strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="title cannot be empty")
+
+    doc.title = title
+    db.commit()
+    return {"message": "Document renamed", "id": doc.id, "title": doc.title}
+
+
+@router.post("/{document_id}/move")
+def move_document(
+    document_id: int,
+    payload: DocumentMoveRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    doc = db.query(Document).filter(Document.id == document_id, Document.is_deleted == False).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    _ensure_document_access(doc, current_user)
+
+    target_parent_id = payload.parent_id
+    if target_parent_id == doc.id:
+        raise HTTPException(status_code=400, detail="Cannot move into itself")
+
+    if target_parent_id is not None:
+        target = db.query(Document).filter(Document.id == target_parent_id, Document.is_deleted == False).first()
+        if not target:
+            raise HTTPException(status_code=404, detail="Target folder not found")
+        if not target.is_folder:
+            raise HTTPException(status_code=400, detail="Target parent must be a folder")
+        _ensure_document_access(target, current_user)
+
+        if doc.is_folder:
+            descendants = _collect_descendants(db, doc.id)
+            descendant_ids = {d.id for d in descendants}
+            if target_parent_id in descendant_ids:
+                raise HTTPException(status_code=400, detail="Cannot move folder into its descendant")
+
+    doc.parent_id = target_parent_id
+    db.commit()
+    return {"message": "Document moved", "id": doc.id, "parent_id": doc.parent_id}
 
 def _collect_descendants(db: Session, root_id: int) -> list[Document]:
     collected = []

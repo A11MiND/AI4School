@@ -21,6 +21,10 @@ export default function ClassDetails() {
     const [students, setStudents] = useState<any[]>([]);
     const [newStudentName, setNewStudentName] = useState('');
     const [adding, setAdding] = useState(false);
+    const [bulkInput, setBulkInput] = useState('');
+    const [bulkDefaultPassword, setBulkDefaultPassword] = useState('');
+    const [bulkAutoCreate, setBulkAutoCreate] = useState(true);
+    const [addingBulk, setAddingBulk] = useState(false);
     
     // Submission view state
     const [selectedStudent, setSelectedStudent] = useState<any>(null);
@@ -76,6 +80,48 @@ export default function ClassDetails() {
             alert(err.response?.data?.detail || "Failed to add student. Ensure username exists.");
         } finally {
              setAdding(false);
+        }
+    };
+
+    const handleBulkAddStudents = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!bulkInput.trim()) return;
+
+        const lines = bulkInput
+            .split('\n')
+            .map(line => line.trim())
+            .filter(Boolean);
+
+        const studentsPayload = lines.map((line) => {
+            const [usernameRaw, passwordRaw, fullNameRaw] = line.split(',').map(s => (s || '').trim());
+            return {
+                username: usernameRaw,
+                ...(passwordRaw ? { password: passwordRaw } : {}),
+                ...(fullNameRaw ? { full_name: fullNameRaw } : {}),
+            };
+        }).filter((row) => row.username);
+
+        if (studentsPayload.length === 0) return;
+
+        setAddingBulk(true);
+        try {
+            const res = await api.post(`/classes/${id}/students/bulk`, {
+                students: studentsPayload,
+                auto_create_missing: bulkAutoCreate,
+                default_password: bulkDefaultPassword.trim() || undefined,
+            });
+            const summary = res.data || {};
+            const failedCount = (summary.failed || []).length;
+            alert(
+                `Batch complete. Added: ${summary.added_to_class || 0}, Created accounts: ${summary.created_accounts || 0}, Already in class: ${summary.already_in_class || 0}, Failed: ${failedCount}`
+            );
+            setBulkInput('');
+            setBulkDefaultPassword('');
+            loadStudents();
+        } catch (err: any) {
+            alert(err.response?.data?.detail || 'Failed to import students in batch.');
+        } finally {
+            setAddingBulk(false);
         }
     };
     
@@ -134,6 +180,46 @@ export default function ClassDetails() {
                         <p className="mt-3 text-xs text-gray-500 flex items-center gap-1">
                             <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span> Note: Student must register an account first.
                         </p>
+                    </div>
+
+                    <div className="lg:col-span-3 bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
+                        <h3 className="text-lg font-bold text-gray-900 mb-2 flex items-center gap-2">
+                            <UserPlus size={20} className="text-emerald-500" /> Batch Import Students
+                        </h3>
+                        <p className="text-sm text-gray-500 mb-4">
+                            Paste one student per line. Format: username,password,full_name. Only username is required.
+                        </p>
+                        <form onSubmit={handleBulkAddStudents} className="space-y-4">
+                            <textarea
+                                className="w-full min-h-[140px] p-3 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+                                value={bulkInput}
+                                onChange={(e) => setBulkInput(e.target.value)}
+                                placeholder={"student_a,Student123!,Alice\nstudent_b\nstudent_c,,Charlie Zhang"}
+                            />
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-center">
+                                <label className="flex items-center gap-2 text-sm text-gray-700">
+                                    <input
+                                        type="checkbox"
+                                        checked={bulkAutoCreate}
+                                        onChange={(e) => setBulkAutoCreate(e.target.checked)}
+                                    />
+                                    Auto-create missing student accounts
+                                </label>
+                                <input
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+                                    value={bulkDefaultPassword}
+                                    onChange={(e) => setBulkDefaultPassword(e.target.value)}
+                                    placeholder="Default password (optional)"
+                                />
+                                <button
+                                    type="submit"
+                                    disabled={!bulkInput.trim() || addingBulk}
+                                    className="bg-emerald-600 text-white px-6 py-2.5 rounded-lg hover:bg-emerald-700 font-medium transition disabled:opacity-50 flex items-center justify-center gap-2 shadow-sm"
+                                >
+                                    {addingBulk ? <Loader2 size={18} className="animate-spin" /> : 'Import Students'}
+                                </button>
+                            </div>
+                        </form>
                     </div>
 
                     {/* Student List */}

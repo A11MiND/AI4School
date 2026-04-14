@@ -206,4 +206,38 @@ describe('Teacher class detail page', () => {
     expect(screen.getByText('65%')).toBeInTheDocument();
     expect(screen.getByText('40%')).toBeInTheDocument();
   });
+
+  it('imports students in batch', async () => {
+    __setRouter({ pathname: '/teacher/class/[id]', query: { id: '1' } });
+    mockedApi.get.mockResolvedValue({ data: [] } as any);
+    mockedApi.post.mockResolvedValueOnce({
+      data: {
+        total: 2,
+        added_to_class: 2,
+        created_accounts: 1,
+        already_in_class: 0,
+        failed: []
+      }
+    } as any);
+
+    render(<ClassDetails />);
+
+    await waitFor(() => expect(screen.getByText(/Batch Import Students/i)).toBeInTheDocument());
+
+    fireEvent.change(screen.getByPlaceholderText(/student_a,Student123!/i), {
+      target: { value: 'student_a\nstudent_b,Pass123!' }
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Import Students/i }));
+
+    await waitFor(() =>
+      expect(mockedApi.post).toHaveBeenCalledWith('/classes/1/students/bulk', {
+        students: [
+          { username: 'student_a' },
+          { username: 'student_b', password: 'Pass123!' }
+        ],
+        auto_create_missing: true,
+        default_password: undefined
+      })
+    );
+  });
 });

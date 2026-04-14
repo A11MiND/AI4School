@@ -156,3 +156,77 @@ def test_student_download_without_visibility_forbidden(client, db_session, tmp_p
 
     res = client.get(f"/documents/{doc.id}/download", headers=auth_header(student))
     assert res.status_code == 403
+
+
+def test_rename_move_and_list_folders(client, db_session):
+    teacher = User(username="teacher_docs_manage", password_hash=jwt.get_password_hash("pass"), role="teacher")
+    db_session.add(teacher)
+    db_session.commit()
+
+    folder_a = Document(title="Folder A", is_folder=True, uploaded_by=teacher.id)
+    folder_b = Document(title="Folder B", is_folder=True, uploaded_by=teacher.id)
+    doc = Document(title="Doc Before", is_folder=False, uploaded_by=teacher.id, parent_id=folder_a.id)
+    db_session.add_all([folder_a, folder_b])
+    db_session.commit()
+    doc.parent_id = folder_a.id
+    db_session.add(doc)
+    db_session.commit()
+
+    res_rename = client.patch(
+        f"/documents/{doc.id}",
+        headers=auth_header(teacher),
+        json={"title": "Doc After"},
+    )
+    assert res_rename.status_code == 200
+    assert res_rename.json()["title"] == "Doc After"
+
+    res_move = client.post(
+        f"/documents/{doc.id}/move",
+        headers=auth_header(teacher),
+        json={"parent_id": folder_b.id},
+    )
+    assert res_move.status_code == 200
+    assert res_move.json()["parent_id"] == folder_b.id
+
+    res_folders = client.get("/documents/folders", headers=auth_header(teacher))
+    assert res_folders.status_code == 200
+    folder_titles = {row["title"] for row in res_folders.json()}
+    assert "Folder A" in folder_titles
+    assert "Folder B" in folder_titles
+
+
+def test_move_folder_into_descendant_blocked(client, db_session):
+    teacher = User(username="teacher_docs_cycle", password_hash=jwt.get_password_hash("pass"), role="teacher")
+    db_session.add(teacher)
+    db_session.commit()
+
+    root = Document(title="Root", is_folder=True, uploaded_by=teacher.id)
+    db_session.add(root)
+    db_session.commit()
+
+    child = Document(title="Child", is_folder=True, uploaded_by=teacher.id, parent_id=root.id)
+    db_session.add(child)
+    db_session.commit()
+
+    res = client.post(
+        f"/documents/{root.id}/move",
+        headers=auth_header(teacher),
+        json={"parent_id": child.id},
+    )
+    assert res.status_code == 400
+
+
+def test_upload_with_display_name(client, db_session):
+    teacher = User(username="teacher_docs_display", password_hash=jwt.get_password_hash("pass"), role="teacher")
+    db_session.add(teacher)
+    db_session.commit()
+
+    files = {"file": ("origin.txt", b"hello", "text/plain")}
+    data = {"display_name": "Renamed Upload"}
+    res_upload = client.post("/documents/upload", headers=auth_header(teacher), files=files, data=data)
+    assert res_upload.status_code == 200
+
+    doc_id = res_upload.json()["id"]
+    doc = db_session.query(Document).filter(Document.id == doc_id).first()
+    assert doc is not None
+    assert doc.title == "Renamed Upload"

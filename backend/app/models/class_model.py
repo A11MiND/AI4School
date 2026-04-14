@@ -8,6 +8,7 @@ class ClassModel(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, nullable=False)
     teacher_id = Column(Integer, ForeignKey("users.id"))
+    invite_code = Column(String, unique=True, index=True, nullable=True)
 
     # Relationships
     teacher = relationship("User", backref="classes")

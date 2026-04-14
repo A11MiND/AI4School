@@ -246,6 +246,28 @@ describe('Student pages', () => {
     await waitFor(() => expect(screen.getByText(/No classes enrolled/i)).toBeInTheDocument());
   });
 
+  it('joins class via invite code', async () => {
+    localStorage.setItem('student_token', 'token');
+    mockedApi.get.mockImplementation((url: any) => {
+      if (String(url).startsWith('/classes')) {
+        return Promise.resolve({ data: [{ id: 1, name: 'Class 1', teacher_id: 10 }] } as any);
+      }
+      if (String(url).startsWith('/documents')) {
+        return Promise.resolve({ data: [] } as any);
+      }
+      return Promise.resolve({ data: [] } as any);
+    });
+    mockedApi.post.mockResolvedValueOnce({ data: { message: 'Joined class' } } as any);
+
+    render(<StudentClassroom />);
+
+    await waitFor(() => expect(screen.getByPlaceholderText(/Enter class invite code/i)).toBeInTheDocument());
+    fireEvent.change(screen.getByPlaceholderText(/Enter class invite code/i), { target: { value: 'ABCD1234' } });
+    fireEvent.click(screen.getByRole('button', { name: /Join Class/i }));
+
+    await waitFor(() => expect(mockedApi.post).toHaveBeenCalledWith('/classes/join', { invite_code: 'ABCD1234' }));
+  });
+
   it('submits student paper and redirects to submission', async () => {
     localStorage.setItem('student_token', 'token');
     __setRouter({ pathname: '/student/paper/[id]', query: { id: '1' }, replace: jest.fn(), push: jest.fn(), back: jest.fn() });

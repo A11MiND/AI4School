@@ -15,6 +15,10 @@ export default function MyClasses() {
     const [classes, setClasses] = useState<any[]>([]);
     const [newClassName, setNewClassName] = useState('');
     const [creating, setCreating] = useState(false);
+    const [inviteHoursByClass, setInviteHoursByClass] = useState<Record<number, number>>({});
+    const [oneTimeByClass, setOneTimeByClass] = useState<Record<number, boolean>>({});
+    const [historyByClass, setHistoryByClass] = useState<Record<number, any[]>>({});
+    const [historyVisibleByClass, setHistoryVisibleByClass] = useState<Record<number, boolean>>({});
     const router = useRouter();
 
     useEffect(() => {
@@ -56,6 +60,75 @@ export default function MyClasses() {
             }
         }
     }
+
+    const refreshInviteCode = async (id: number) => {
+        try {
+            const res = await api.post(`/classes/${id}/invite-code/refresh`, {
+                expires_in_hours: inviteHoursByClass[id] ?? 168,
+                one_time: oneTimeByClass[id] ?? false,
+            });
+            const nextCode = res.data?.invite_code;
+            setClasses(prev => prev.map(cls => cls.id === id ? { ...cls, invite_code: nextCode } : cls));
+            await loadInviteHistory(id);
+        } catch (e) {
+            alert("Failed to refresh invite code");
+        }
+    };
+
+    const createInviteCode = async (id: number) => {
+        try {
+            const res = await api.post(`/classes/${id}/invite-codes`, {
+                expires_in_hours: inviteHoursByClass[id] ?? 168,
+                one_time: oneTimeByClass[id] ?? false,
+            });
+            const nextCode = res.data?.code;
+            if (nextCode) {
+                setClasses(prev => prev.map(cls => cls.id === id ? { ...cls, invite_code: nextCode } : cls));
+            }
+            await loadInviteHistory(id);
+        } catch {
+            alert("Failed to create invite code");
+        }
+    };
+
+    const loadInviteHistory = async (id: number) => {
+        try {
+            const res = await api.get(`/classes/${id}/invite-codes`);
+            setHistoryByClass(prev => ({ ...prev, [id]: res.data || [] }));
+        } catch {
+            alert("Failed to load invite history");
+        }
+    };
+
+    const toggleHistory = async (id: number) => {
+        const nextVisible = !(historyVisibleByClass[id] ?? false);
+        setHistoryVisibleByClass(prev => ({ ...prev, [id]: nextVisible }));
+        if (nextVisible && !historyByClass[id]) {
+            await loadInviteHistory(id);
+        }
+    };
+
+    const revokeInviteCode = async (classId: number, inviteId: number) => {
+        try {
+            await api.post(`/classes/invite-codes/${inviteId}/revoke`);
+            await loadInviteHistory(classId);
+        } catch {
+            alert("Failed to revoke invite code");
+        }
+    };
+
+    const copyInviteCode = async (code?: string) => {
+        if (!code) {
+            alert("Invite code unavailable");
+            return;
+        }
+        try {
+            await navigator.clipboard.writeText(code);
+            alert("Invite code copied");
+        } catch {
+            alert(`Invite code: ${code}`);
+        }
+    };
 
     return (
         <div className="min-h-screen bg-gray-50 p-8">
@@ -115,6 +188,87 @@ export default function MyClasses() {
                                 
                                 <h3 className="text-xl font-bold text-gray-900 mb-2 truncate">{cls.name}</h3>
                                 <p className="text-sm text-gray-500 mb-6">Class ID: <span className="font-mono bg-gray-100 px-1 rounded">{cls.id}</span></p>
+                                <div className="mb-4 p-2 rounded-lg bg-slate-50 border border-slate-200">
+                                    <div className="text-xs text-slate-500 mb-1">Invite Code</div>
+                                    <div className="flex items-center justify-between gap-2">
+                                        <span className="font-mono text-sm text-slate-800">{cls.invite_code || '-'}</span>
+                                        <div className="flex items-center gap-2">
+                                            <button
+                                                onClick={() => copyInviteCode(cls.invite_code)}
+                                                className="text-xs px-2 py-1 rounded border border-slate-200 hover:bg-slate-100"
+                                            >
+                                                Copy
+                                            </button>
+                                            <button
+                                                onClick={() => refreshInviteCode(cls.id)}
+                                                className="text-xs px-2 py-1 rounded border border-slate-200 hover:bg-slate-100"
+                                            >
+                                                Refresh
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div className="mt-3 grid grid-cols-1 gap-2 text-xs">
+                                        <label className="flex items-center justify-between text-slate-600">
+                                            <span>Expires (hours)</span>
+                                            <input
+                                                type="number"
+                                                min={1}
+                                                value={inviteHoursByClass[cls.id] ?? 168}
+                                                onChange={(e) => setInviteHoursByClass(prev => ({ ...prev, [cls.id]: Number(e.target.value) || 168 }))}
+                                                className="w-20 border border-slate-300 rounded px-2 py-1"
+                                            />
+                                        </label>
+                                        <label className="flex items-center justify-between text-slate-600">
+                                            <span>One-time code</span>
+                                            <input
+                                                type="checkbox"
+                                                checked={oneTimeByClass[cls.id] ?? false}
+                                                onChange={(e) => setOneTimeByClass(prev => ({ ...prev, [cls.id]: e.target.checked }))}
+                                            />
+                                        </label>
+                                        <div className="flex items-center gap-2">
+                                            <button
+                                                onClick={() => createInviteCode(cls.id)}
+                                                className="text-xs px-2 py-1 rounded border border-slate-200 hover:bg-slate-100"
+                                            >
+                                                New Code
+                                            </button>
+                                            <button
+                                                onClick={() => toggleHistory(cls.id)}
+                                                className="text-xs px-2 py-1 rounded border border-slate-200 hover:bg-slate-100"
+                                            >
+                                                {historyVisibleByClass[cls.id] ? 'Hide History' : 'Show History'}
+                                            </button>
+                                        </div>
+                                    </div>
+                                    {historyVisibleByClass[cls.id] && (
+                                        <div className="mt-3 border-t border-slate-200 pt-2 max-h-36 overflow-auto space-y-1">
+                                            {(historyByClass[cls.id] || []).length === 0 && (
+                                                <div className="text-xs text-slate-500">No invite history yet.</div>
+                                            )}
+                                            {(historyByClass[cls.id] || []).map((item) => (
+                                                <div key={item.id} className="text-xs flex items-center justify-between gap-2">
+                                                    <div>
+                                                        <div className="font-mono text-slate-700">{item.code}</div>
+                                                        <div className="text-slate-500">
+                                                            used {item.used_count}/{item.max_uses ?? '∞'}
+                                                            {item.expires_at ? `, expires ${new Date(item.expires_at).toLocaleString()}` : ''}
+                                                            {item.revoked ? ', revoked' : ''}
+                                                        </div>
+                                                    </div>
+                                                    {!item.revoked && (
+                                                        <button
+                                                            onClick={() => revokeInviteCode(cls.id, item.id)}
+                                                            className="px-2 py-1 rounded border border-red-200 text-red-600 hover:bg-red-50"
+                                                        >
+                                                            Revoke
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
                                 
                                 <div className="mt-auto">
                                     <Link href={`/teacher/class/${cls.id}`}>

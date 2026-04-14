@@ -3,12 +3,13 @@ import api from '../../utils/api';
 import { API_BASE_URL } from '../../utils/config';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { FileText, Upload, Trash2, Folder, FolderPlus, ArrowLeft, ChevronRight, Home, Loader2, Download, FilePlus } from 'lucide-react';
+import { FileText, Upload, Trash2, Folder, FolderPlus, ChevronRight, Home, Loader2, FilePlus, Pencil, MoveRight, X } from 'lucide-react';
 
 interface DocItem {
     id: number;
     title: string;
     is_folder: boolean;
+    parent_id?: number | null;
     created_at: string;
     file_path?: string;
     visible?: boolean;
@@ -19,6 +20,11 @@ interface Breadcrumb {
     name: string;
 }
 
+interface FolderChoice {
+    id: number;
+    title: string;
+}
+
 export default function ContentLibrary() {
     const [documents, setDocuments] = useState<DocItem[]>([]);
     const [currentFolderId, setCurrentFolderId] = useState<number | null>(null);
@@ -27,9 +33,15 @@ export default function ContentLibrary() {
     const [selectedClassId, setSelectedClassId] = useState<number | null>(null);
     
     const [file, setFile] = useState<File | null>(null);
+    const [uploadName, setUploadName] = useState('');
     const [uploading, setUploading] = useState(false);
     const [newFolderName, setNewFolderName] = useState('');
     const [showCreateFolder, setShowCreateFolder] = useState(false);
+    const [renameDoc, setRenameDoc] = useState<DocItem | null>(null);
+    const [renameValue, setRenameValue] = useState('');
+    const [moveDoc, setMoveDoc] = useState<DocItem | null>(null);
+    const [moveTargetId, setMoveTargetId] = useState<string>('');
+    const [folders, setFolders] = useState<FolderChoice[]>([]);
     
     const router = useRouter();
 
@@ -79,6 +91,9 @@ export default function ContentLibrary() {
         setUploading(true);
         const formData = new FormData();
         formData.append('file', file);
+        if (uploadName.trim()) {
+            formData.append('display_name', uploadName.trim());
+        }
         if (currentFolderId) {
             formData.append('parent_id', currentFolderId.toString());
         }
@@ -88,6 +103,7 @@ export default function ContentLibrary() {
                  headers: { 'Content-Type': 'multipart/form-data' }
              });
              setFile(null);
+             setUploadName('');
              loadDocuments();
         } catch (err) {
             alert('Upload failed');
@@ -143,6 +159,48 @@ export default function ContentLibrary() {
             setDocuments(prev => prev.map(doc => doc.id === docId ? { ...doc, visible } : doc));
         } catch (err) {
             alert('Failed to update visibility');
+        }
+    };
+
+    const openRename = (doc: DocItem) => {
+        setRenameDoc(doc);
+        setRenameValue(doc.title);
+    };
+
+    const submitRename = async () => {
+        if (!renameDoc || !renameValue.trim()) return;
+        try {
+            await api.patch(`/documents/${renameDoc.id}`, { title: renameValue.trim() });
+            setRenameDoc(null);
+            setRenameValue('');
+            loadDocuments();
+        } catch (err) {
+            alert('Failed to rename item');
+        }
+    };
+
+    const openMove = async (doc: DocItem) => {
+        setMoveDoc(doc);
+        setMoveTargetId(doc.parent_id == null ? '' : String(doc.parent_id));
+        try {
+            const res = await api.get('/documents/folders');
+            const options = (res.data || []).filter((f: FolderChoice) => f.id !== doc.id);
+            setFolders(options);
+        } catch {
+            setFolders([]);
+        }
+    };
+
+    const submitMove = async () => {
+        if (!moveDoc) return;
+        const parent_id = moveTargetId === '' ? null : Number(moveTargetId);
+        try {
+            await api.post(`/documents/${moveDoc.id}/move`, { parent_id });
+            setMoveDoc(null);
+            setMoveTargetId('');
+            loadDocuments();
+        } catch (err: any) {
+            alert(err?.response?.data?.detail || 'Failed to move item');
         }
     };
 
@@ -235,6 +293,13 @@ export default function ContentLibrary() {
                             >
                                 {file ? file.name : "Select File"}
                             </label>
+                            <input
+                                type="text"
+                                value={uploadName}
+                                onChange={(e) => setUploadName(e.target.value)}
+                                placeholder="Optional display name"
+                                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                            />
                             <button 
                                 onClick={handleUpload} 
                                 disabled={!file || uploading} 
@@ -284,6 +349,20 @@ export default function ContentLibrary() {
                                     </div>
                                     
                                     <div className="flex justify-center gap-4 mt-2 pt-3 border-t border-slate-100 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity pointer-events-none group-hover:pointer-events-auto group-focus-within:pointer-events-auto">
+                                       <button
+                                            title="Rename"
+                                            onClick={(e) => { e.stopPropagation(); openRename(doc); }}
+                                            className="text-slate-400 hover:text-blue-600 transition-colors"
+                                        >
+                                            <Pencil size={18} />
+                                        </button>
+                                       <button
+                                            title="Move"
+                                            onClick={(e) => { e.stopPropagation(); openMove(doc); }}
+                                            className="text-slate-400 hover:text-violet-600 transition-colors"
+                                        >
+                                            <MoveRight size={18} />
+                                        </button>
                                        {!doc.is_folder && (
                                             <button 
                                                 title="Create Exam"
@@ -307,6 +386,55 @@ export default function ContentLibrary() {
                      )}
                  </div>
              </div>
+
+             {renameDoc && (
+                <div className="fixed inset-0 bg-black/35 z-50 flex items-center justify-center p-4">
+                    <div className="bg-white w-full max-w-md rounded-xl border border-slate-200 shadow-xl p-5">
+                        <div className="flex items-center justify-between mb-3">
+                            <h3 className="font-semibold text-slate-900">Rename Item</h3>
+                            <button onClick={() => setRenameDoc(null)} className="text-slate-400 hover:text-slate-600">
+                                <X size={18} />
+                            </button>
+                        </div>
+                        <input
+                            value={renameValue}
+                            onChange={(e) => setRenameValue(e.target.value)}
+                            className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
+                        />
+                        <div className="flex justify-end gap-2 mt-4">
+                            <button onClick={() => setRenameDoc(null)} className="px-3 py-2 rounded-lg border border-slate-200 text-sm">Cancel</button>
+                            <button onClick={submitRename} className="px-3 py-2 rounded-lg bg-blue-600 text-white text-sm">Save</button>
+                        </div>
+                    </div>
+                </div>
+             )}
+
+             {moveDoc && (
+                <div className="fixed inset-0 bg-black/35 z-50 flex items-center justify-center p-4">
+                    <div className="bg-white w-full max-w-md rounded-xl border border-slate-200 shadow-xl p-5">
+                        <div className="flex items-center justify-between mb-3">
+                            <h3 className="font-semibold text-slate-900">Move Item</h3>
+                            <button onClick={() => setMoveDoc(null)} className="text-slate-400 hover:text-slate-600">
+                                <X size={18} />
+                            </button>
+                        </div>
+                        <select
+                            value={moveTargetId}
+                            onChange={(e) => setMoveTargetId(e.target.value)}
+                            className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
+                        >
+                            <option value="">Root</option>
+                            {folders.map((folder) => (
+                                <option key={folder.id} value={String(folder.id)}>{folder.title}</option>
+                            ))}
+                        </select>
+                        <div className="flex justify-end gap-2 mt-4">
+                            <button onClick={() => setMoveDoc(null)} className="px-3 py-2 rounded-lg border border-slate-200 text-sm">Cancel</button>
+                            <button onClick={submitMove} className="px-3 py-2 rounded-lg bg-violet-600 text-white text-sm">Move</button>
+                        </div>
+                    </div>
+                </div>
+             )}
         </div>
     );
 }

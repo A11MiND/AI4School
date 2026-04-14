@@ -8,6 +8,8 @@ export default function StudentClassroom() {
   const [documents, setDocuments] = useState<any[]>([]);
   const [currentFolderId, setCurrentFolderId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
+  const [inviteCode, setInviteCode] = useState('');
+  const [joining, setJoining] = useState(false);
 
   useEffect(() => {
     fetchClasses();
@@ -69,12 +71,45 @@ export default function StudentClassroom() {
 
   const selectedClass = classes.find(c => c.id === selectedClassId);
 
+  const handleJoinClass = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const code = inviteCode.trim();
+    if (!code) return;
+    setJoining(true);
+    try {
+      await api.post('/classes/join', { invite_code: code });
+      setInviteCode('');
+      await fetchClasses();
+    } catch (err: any) {
+      alert(err?.response?.data?.detail || 'Failed to join class');
+    } finally {
+      setJoining(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <header>
         <h1 className="text-2xl font-bold text-gray-900">My Classroom</h1>
         <p className="text-gray-500">Access your course materials and resources.</p>
       </header>
+
+      <form onSubmit={handleJoinClass} className="bg-white border border-gray-200 rounded-xl p-4 flex flex-col md:flex-row md:items-center gap-3">
+        <div className="text-sm text-gray-600 md:min-w-[180px]">Join with invite code</div>
+        <input
+          value={inviteCode}
+          onChange={(e) => setInviteCode(e.target.value.toUpperCase())}
+          placeholder="Enter class invite code"
+          className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+        />
+        <button
+          type="submit"
+          disabled={!inviteCode.trim() || joining}
+          className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
+        >
+          {joining ? 'Joining...' : 'Join Class'}
+        </button>
+      </form>
 
       {/* Class Selector Tab */}
       <div className="flex gap-4 border-b border-gray-200 pb-1 overflow-x-auto">

@@ -158,3 +158,79 @@ def test_add_and_remove_student_success(client, db_session):
     )
     assert res_remove.status_code == 200
     assert res_remove.json()["message"] == "Student removed from class"
+
+
+def test_bulk_add_students_with_auto_create(client, db_session):
+    teacher = User(username="teacher_bulk", password_hash=jwt.get_password_hash("pass"), role="teacher")
+    db_session.add(teacher)
+    db_session.commit()
+
+    class_ = ClassModel(name="Bulk Class", teacher_id=teacher.id)
+    db_session.add(class_)
+    db_session.commit()
+
+    res = client.post(
+        f"/classes/{class_.id}/students/bulk",
+        headers=auth_header(teacher),
+        json={
+            "students": [
+                {"username": "bulk_student_1"},
+                {"username": "bulk_student_2", "password": "Student123!", "full_name": "Bulk Student Two"}
+            ],
+            "auto_create_missing": True,
+            "default_password": "TempPass123!"
+        },
+    )
+
+    assert res.status_code == 200
+    data = res.json()
+    assert data["total"] == 2
+    assert data["added_to_class"] == 2
+    assert data["created_accounts"] == 2
+    assert data["already_in_class"] == 0
+    assert data["failed"] == []
+
+    created = db_session.query(User).filter(User.username.in_(["bulk_student_1", "bulk_student_2"])).all()
+    assert len(created) == 2
+    assert all(u.role == "student" for u in created)
+
+
+def test_bulk_add_students_mixed_results(client, db_session):
+    teacher = User(username="teacher_bulk_mixed", password_hash=jwt.get_password_hash("pass"), role="teacher")
+    existing_student = User(username="bulk_existing_stu", password_hash=jwt.get_password_hash("pass"), role="student")
+    existing_teacher = User(username="bulk_existing_teacher", password_hash=jwt.get_password_hash("pass"), role="teacher")
+    db_session.add_all([teacher, existing_student, existing_teacher])
+    db_session.commit()
+
+    class_ = ClassModel(name="Bulk Mixed", teacher_id=teacher.id)
+    db_session.add(class_)
+    db_session.commit()
+
+    db_session.add(StudentClass(user_id=existing_student.id, class_id=class_.id))
+    db_session.commit()
+
+    res = client.post(
+        f"/classes/{class_.id}/students/bulk",
+        headers=auth_header(teacher),
+        json={
+            "students": [
+                {"username": "bulk_existing_stu"},
+                {"username": "bulk_existing_teacher"},
+                {"username": "bulk_missing"},
+                {"username": "bulk_existing_stu"}
+            ],
+            "auto_create_missing": False
+        },
+    )
+
+    assert res.status_code == 200
+    data = res.json()
+    assert data["total"] == 4
+    assert data["added_to_class"] == 0
+    assert data["already_in_class"] == 1
+    assert data["created_accounts"] == 0
+    assert len(data["failed"]) == 3
+    reasons = {f["username"]: f["reason"] for f in data["failed"]}
+    assert reasons["bulk_existing_teacher"] == "User is not a student"
+    assert reasons["bulk_missing"] == "Student username not found"
+    assert reasons["bulk_existing_stu"] == "Duplicate username in request"
