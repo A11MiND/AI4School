@@ -17,6 +17,18 @@ export default function ListeningBuilder() {
   const [showAnswers, setShowAnswers] = useState(true);
   const [saving, setSaving] = useState(false);
 
+  const hasAudioModelCapability = (provider: string, model: string) => {
+    if (provider !== 'qwen') return true;
+    const normalized = (model || '').toLowerCase();
+    return (
+      normalized.includes('asr') ||
+      normalized.includes('paraformer') ||
+      normalized.includes('tts') ||
+      normalized.includes('audio') ||
+      normalized.includes('livetranslate')
+    );
+  };
+
   useEffect(() => {
     if (!paperId) return;
     const load = async () => {
@@ -123,9 +135,41 @@ export default function ListeningBuilder() {
 
     setGenerating(true);
     try {
+      const provider = localStorage.getItem('ai_provider') || 'deepseek';
+      const model = localStorage.getItem('ai_model') || '';
+      const apiKey =
+        provider === 'deepseek'
+          ? localStorage.getItem('deepseek_api_key') || ''
+          : provider === 'qwen'
+            ? localStorage.getItem('qwen_api_key') || ''
+            : provider === 'openrouter'
+              ? localStorage.getItem('openrouter_api_key') || ''
+              : '';
+      const baseUrl =
+        provider === 'deepseek'
+          ? localStorage.getItem('deepseek_base_url') || ''
+          : provider === 'qwen'
+            ? localStorage.getItem('qwen_base_url') || ''
+            : provider === 'openrouter'
+              ? localStorage.getItem('openrouter_base_url') || ''
+              : '';
+
+      if (!hasAudioModelCapability(provider, model)) {
+        alert('Selected model has no ASR/TTS capability. Listening and speaking are unavailable with this model.');
+        return;
+      }
+      if ((provider === 'deepseek' || provider === 'qwen' || provider === 'openrouter') && !apiKey) {
+        alert('Please set an API key in Profile Settings for the selected provider.');
+        return;
+      }
+
       const res = await api.post('/papers/listening/generate-script', {
         prompt,
         question_count: 5,
+        ai_provider: provider,
+        ai_model: model,
+        api_key: apiKey || undefined,
+        base_url: baseUrl || undefined,
       });
       const data = res.data || {};
       if (data.transcript) {

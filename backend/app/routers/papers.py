@@ -87,6 +87,8 @@ class WritingPromptGenerateRequest(BaseModel):
     custom_requirements: Optional[str] = None
     ai_provider: Optional[str] = None
     ai_model: Optional[str] = None
+    api_key: Optional[str] = None
+    base_url: Optional[str] = None
 
 
 class WritingResponseItem(BaseModel):
@@ -120,6 +122,10 @@ class ListeningPaperCreate(BaseModel):
 class ListeningScriptGenerateRequest(BaseModel):
     prompt: str
     question_count: Optional[int] = 5
+    ai_provider: Optional[str] = None
+    ai_model: Optional[str] = None
+    api_key: Optional[str] = None
+    base_url: Optional[str] = None
 
 
 class SpeakingPaperCreate(BaseModel):
@@ -141,6 +147,22 @@ class SpeakingTurnRequest(BaseModel):
     role: str
     text: str
     audio_url: Optional[str] = None
+    ai_provider: Optional[str] = None
+    ai_model: Optional[str] = None
+    api_key: Optional[str] = None
+    base_url: Optional[str] = None
+
+
+def _has_audio_model_capability(provider: Optional[str], model: Optional[str]) -> bool:
+    if (provider or "").strip().lower() != "qwen":
+        return True
+    normalized = (model or "").strip().lower()
+    if not normalized:
+        return False
+    return any(
+        token in normalized
+        for token in ("asr", "paraformer", "tts", "audio", "livetranslate")
+    )
 
 # Strict objective types - require exact match
 STRICT_OBJECTIVE_TYPES = {
@@ -482,6 +504,8 @@ def generate_writing_prompt_bundle(
     options = {
         "ai_provider": payload.ai_provider,
         "ai_model": payload.ai_model,
+        "api_key": payload.api_key,
+        "base_url": payload.base_url,
     }
     try:
         generated = generate_writing_prompts(
@@ -763,9 +787,17 @@ def generate_listening_script(
 
     question_count = max(2, min(int(payload.question_count or 5), 10))
 
+    request_provider = payload.ai_provider or current_user.ai_provider
+    request_model = payload.ai_model or current_user.ai_model
+    if not _has_audio_model_capability(request_provider, request_model):
+        raise HTTPException(
+            status_code=400,
+            detail="Selected model has no ASR/TTS capability. Listening and speaking are unavailable with this model.",
+        )
+
     provider, model = _resolve_ai_config({
-        "ai_provider": current_user.ai_provider,
-        "ai_model": current_user.ai_model,
+        "ai_provider": request_provider,
+        "ai_model": request_model,
     })
 
     system_prompt = (
@@ -815,6 +847,8 @@ def generate_listening_script(
             user_prompt=user_prompt,
             temperature=0.5,
             max_tokens=1600,
+            api_key=payload.api_key,
+            base_url=payload.base_url,
         )
         text = (raw or "").strip()
         if "```" in text:
@@ -1074,9 +1108,17 @@ def append_speaking_turn(
         ])
         summary = session.summary_text or ""
 
+        request_provider = payload.ai_provider or current_user.ai_provider
+        request_model = payload.ai_model or current_user.ai_model
+        if not _has_audio_model_capability(request_provider, request_model):
+            raise HTTPException(
+                status_code=400,
+                detail="Selected model has no ASR/TTS capability. Listening and speaking are unavailable with this model.",
+            )
+
         provider, model = _resolve_ai_config({
-            "ai_provider": current_user.ai_provider,
-            "ai_model": current_user.ai_model,
+            "ai_provider": request_provider,
+            "ai_model": request_model,
         })
         system_prompt = (
             "You are an English speaking examiner for students. "
@@ -1097,6 +1139,8 @@ def append_speaking_turn(
                 user_prompt=user_prompt,
                 temperature=0.4,
                 max_tokens=120,
+                api_key=payload.api_key,
+                base_url=payload.base_url,
             ).strip()
             if not examiner_text:
                 examiner_text = "Thanks. Could you tell me more about that?"

@@ -428,7 +428,7 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role }) => {
                         className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
                         placeholder="sk-..."
                       />
-                      <p className="mt-1 text-xs text-gray-500">仅用于当前设备测试与生成；保存后会留在本地浏览器。</p>
+                      <p className="mt-1 text-xs text-gray-500">Only used for testing and generation on this device; saved in the local browser after update.</p>
                     </div>
                     <div>
                       <label className="block text-sm font-medium text-slate-700 mb-2">DeepSeek Base URL</label>
@@ -454,7 +454,7 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role }) => {
                         className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
                         placeholder="sk-or-v1-..."
                       />
-                      <p className="mt-1 text-xs text-gray-500">仅用于当前设备测试连接；保存后会留在本地浏览器。</p>
+                      <p className="mt-1 text-xs text-gray-500">Only used for connection testing on this device; saved in the local browser after update.</p>
                     </div>
                     <div>
                       <label className="block text-sm font-medium text-slate-700 mb-2">OpenRouter Base URL</label>
@@ -480,7 +480,7 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role }) => {
                         className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
                         placeholder="sk-..."
                       />
-                      <p className="mt-1 text-xs text-gray-500">仅用于当前设备测试连接；保存后会留在本地浏览器。</p>
+                      <p className="mt-1 text-xs text-gray-500">Only used for connection testing on this device; saved in the local browser after update.</p>
                     </div>
                     <div>
                       <label className="block text-sm font-medium text-slate-700 mb-2">Qwen Base URL</label>
