@@ -181,7 +181,7 @@ export default function StudentReport() {
                                         <CartesianGrid strokeDasharray="3 3" />
                                         <XAxis dataKey="name" />
                                         <YAxis domain={[0, 100]} />
-                                        <Tooltip formatter={(value: number, _, props: any) => [value, props?.payload?.title || 'Score']} />
+                                        <Tooltip formatter={(value) => [value ?? 0, 'Score']} />
                                         <Line type="monotone" dataKey="score" stroke="#6366f1" strokeWidth={2} dot={{ r: 3 }} />
                                     </LineChart>
                                 </ResponsiveContainer>
