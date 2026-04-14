@@ -43,6 +43,8 @@ def generate_writing_prompts(
         raise ValueError("Invalid task mode")
 
     provider, model = _resolve_ai_config(options)
+    request_api_key = str((options or {}).get("api_key") or "").strip() or None
+    request_base_url = str((options or {}).get("base_url") or "").strip() or None
     system_prompt = _build_system_prompt(mode)
 
     user_prompt = (
@@ -60,6 +62,8 @@ def generate_writing_prompts(
         user_prompt=user_prompt,
         temperature=0.3,
         max_tokens=2200,
+        api_key=request_api_key,
+        base_url=request_base_url,
     )
     data = _extract_json_block(content)
     if not data:
