@@ -239,7 +239,7 @@ export default function TeacherPaperManager({
                                     <Users size={16} /> Current Assignments
                                 </h4>
                                 {assignments.length === 0 ? (
-                                    <p className="text-sm text-gray-500 italic">This paper hasn't been assigned to any class yet.</p>
+                                    <p className="text-sm text-gray-500 italic">This paper hasn&apos;t been assigned to any class yet.</p>
                                 ) : (
                                     <div className="space-y-3">
                                         {assignments.map((assignment) => (

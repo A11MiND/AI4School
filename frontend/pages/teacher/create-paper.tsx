@@ -603,7 +603,7 @@ export default function CreatePaper() {
                       {questions.length === 0 ? (
                           <div className="h-full flex flex-col items-center justify-center text-slate-400">
                                <Sparkles size={48} className="text-slate-300 mb-4" />
-                               <p>Click "Generate" to create questions from the text.</p>
+                             <p>Click &quot;Generate&quot; to create questions from the text.</p>
                           </div>
                       ) : (
                           questions.map((q, idx) => (
