@@ -21,7 +21,8 @@ def test_avatar_upload(client, db_session):
     assert "avatar_url" in data
     assert data["avatar_url"].startswith("uploads/avatars/")
 
-    file_path = os.path.join("/Users/allmind/Desktop/Work/AI4School/backend", data["avatar_url"])
+    # The app stores avatar paths relative to backend runtime cwd.
+    file_path = os.path.abspath(data["avatar_url"])
     assert os.path.exists(file_path)
 
 
