@@ -65,7 +65,15 @@ export default function Home() {
 
        {/* Footer */}
        <footer className="py-8 text-center text-slate-400 text-sm border-t border-slate-100 mt-auto bg-white/50">
-          © {new Date().getFullYear()} AI4School. Empowering Education with AI.
+          © {new Date().getFullYear()} Edcosys.{' '}
+          <a
+            href="https://www.edcosys.com/"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-indigo-600 hover:text-indigo-700"
+          >
+            www.edcosys.com
+          </a>
        </footer>
     </div>
   );

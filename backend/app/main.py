@@ -2,8 +2,8 @@ import os
 from dotenv import load_dotenv
 
 # Load environment variables before importing modules that read os.getenv at import time.
-load_dotenv()
-load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", ".env"), override=False)
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"), override=False)
 
 from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware

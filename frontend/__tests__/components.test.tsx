@@ -4,6 +4,7 @@ import axios from 'axios';
 import Layout from '../components/Layout';
 import Sidebar from '../components/Sidebar';
 import ProfileSettings from '../components/ProfileSettings';
+import NotificationProvider from '../components/NotificationProvider';
 import { __setRouter } from 'next/router';
 
 jest.mock('axios');
@@ -17,6 +18,13 @@ jest.mock('next/link', () => ({
 }));
 
 const mockedAxios = axios as jest.Mocked<typeof axios>;
+
+const renderProfileSettings = (role: 'teacher' | 'student') =>
+  render(
+    <NotificationProvider>
+      <ProfileSettings role={role} />
+    </NotificationProvider>
+  );
 
 describe('Shared components', () => {
   beforeEach(() => {
@@ -93,7 +101,7 @@ describe('Shared components', () => {
 
   it('renders ProfileSettings for teacher', async () => {
     localStorage.setItem('teacher_token', 'token');
-    render(<ProfileSettings role="teacher" />);
+    renderProfileSettings('teacher');
 
     await waitFor(() => expect(screen.getByText('Profile Settings')).toBeInTheDocument());
     expect(screen.getByText('Security')).toBeInTheDocument();
@@ -105,7 +113,7 @@ describe('Shared components', () => {
       data: { id: 2, username: 'student', full_name: 'Student Name', avatar_url: 'uploads/avatar.png', role: 'student' }
     } as any);
 
-    render(<ProfileSettings role="student" />);
+    renderProfileSettings('student');
 
     await waitFor(() => expect(screen.getByDisplayValue('Student Name')).toBeInTheDocument());
     const avatar = screen.getByAltText('Avatar') as HTMLImageElement;
@@ -118,7 +126,7 @@ describe('Shared components', () => {
       data: { id: 3, username: null, full_name: null, role: 'teacher' }
     } as any);
 
-    const { container } = render(<ProfileSettings role="teacher" />);
+    const { container } = renderProfileSettings('teacher');
 
     await waitFor(() => expect(screen.getByText('Profile Settings')).toBeInTheDocument());
     const inputs = container.querySelectorAll('input[type="text"]');
@@ -158,7 +166,7 @@ describe('Shared components', () => {
 
   it('shows password mismatch error', async () => {
     localStorage.setItem('teacher_token', 'token');
-    render(<ProfileSettings role="teacher" />);
+    renderProfileSettings('teacher');
 
     await waitFor(() => expect(screen.getByText('Profile Settings')).toBeInTheDocument());
 
@@ -176,7 +184,7 @@ describe('Shared components', () => {
       data: { id: 1, username: 'teacher', full_name: 'Teacher', role: 'teacher' }
     } as any);
 
-    render(<ProfileSettings role="teacher" />);
+    renderProfileSettings('teacher');
 
     await waitFor(() => expect(screen.getByText('Profile Settings')).toBeInTheDocument());
 
@@ -194,7 +202,7 @@ describe('Shared components', () => {
     localStorage.setItem('teacher_token', 'token');
     mockedAxios.post.mockRejectedValueOnce(new Error('fail'));
 
-    const { container } = render(<ProfileSettings role="teacher" />);
+    const { container } = renderProfileSettings('teacher');
 
     await waitFor(() => expect(screen.getByText('Profile Settings')).toBeInTheDocument());
 
@@ -209,7 +217,7 @@ describe('Shared components', () => {
     localStorage.setItem('teacher_token', 'token');
     mockedAxios.post.mockClear();
 
-    const { container } = render(<ProfileSettings role="teacher" />);
+    const { container } = renderProfileSettings('teacher');
 
     await waitFor(() => expect(screen.getByText('Profile Settings')).toBeInTheDocument());
 
@@ -221,7 +229,7 @@ describe('Shared components', () => {
 
   it('renders loading state when no token present', async () => {
     localStorage.clear();
-    render(<ProfileSettings role="teacher" />);
+    renderProfileSettings('teacher');
 
     expect(screen.getByText(/Loading profile/i)).toBeInTheDocument();
   });
@@ -230,7 +238,7 @@ describe('Shared components', () => {
     localStorage.setItem('teacher_token', 'token');
     mockedAxios.put.mockRejectedValueOnce(new Error('fail'));
 
-    render(<ProfileSettings role="teacher" />);
+    renderProfileSettings('teacher');
 
     await waitFor(() => expect(screen.getByText('Profile Settings')).toBeInTheDocument());
 
@@ -243,7 +251,7 @@ describe('Shared components', () => {
     localStorage.setItem('teacher_token', 'token');
     mockedAxios.get.mockRejectedValueOnce(new Error('fail'));
 
-    render(<ProfileSettings role="teacher" />);
+    renderProfileSettings('teacher');
 
     await waitFor(() => expect(screen.getByText('Profile Settings')).toBeInTheDocument());
   });
@@ -255,7 +263,7 @@ describe('Shared components', () => {
       data: { id: 1, username: 'teacher', full_name: 'Teacher', role: 'teacher' }
     } as any);
 
-    const { container } = render(<ProfileSettings role="teacher" />);
+    const { container } = renderProfileSettings('teacher');
 
     await waitFor(() => expect(screen.getByText('Profile Settings')).toBeInTheDocument());
 

@@ -14,6 +14,7 @@ jobs:
     env:
       JWT_SECRET_KEY: test-secret-key-32-chars-minimum
       DATABASE_URL: sqlite:///./test.db
+      PYTHONPATH: .
     steps:
       - name: Checkout
         uses: actions/checkout@v4

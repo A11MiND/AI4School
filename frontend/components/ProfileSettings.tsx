@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
-import { User as UserIcon, Camera, Save, Lock, CheckCircle } from 'lucide-react';
+import { User as UserIcon, Camera, Save, Lock } from 'lucide-react';
 import { API_BASE_URL } from '../utils/config';
+import { useNotifier } from './NotificationProvider';
 
 interface ProfileSettingsProps {
   role: 'student' | 'teacher';
@@ -21,10 +22,10 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role }) => {
   const [user, setUser] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState<{type: 'success' | 'error', text: string} | null>(null);
   const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
   const [testMessage, setTestMessage] = useState<string>('');
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const { notify } = useNotifier();
 
   const [formData, setFormData] = useState({
     full_name: '',
@@ -183,7 +184,6 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role }) => {
     formData.append('file', file);
 
     try {
-      setMessage(null);
       await axios.post(`${API_BASE_URL}/users/me/avatar`, formData, {
         headers: { 
           Authorization: `Bearer ${token}`,
@@ -192,17 +192,16 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role }) => {
       });
       // Refresh profile to see new avatar
       fetchProfile();
-      setMessage({ type: 'success', text: 'Avatar updated successfully!' });
+      notify({ type: 'success', title: 'Profile', message: 'Avatar updated successfully!' });
     } catch (err) {
-      setMessage({ type: 'error', text: 'Failed to upload avatar.' });
+      notify({ type: 'error', title: 'Profile', message: 'Failed to upload avatar.' });
     }
   };
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    setMessage(null);
     if (formData.password && formData.password !== formData.confirm_password) {
-      setMessage({ type: 'error', text: 'Passwords do not match.' });
+      notify({ type: 'error', title: 'Profile', message: 'Passwords do not match.' });
       return;
     }
 
@@ -236,11 +235,11 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role }) => {
       if (formData.openrouter_api_key) {
         localStorage.setItem('openrouter_api_key', formData.openrouter_api_key);
       }
-      setMessage({ type: 'success', text: 'Profile updated successfully!' });
+      notify({ type: 'success', title: 'Profile', message: 'Profile updated successfully!' });
       fetchProfile(); // Refresh data
     } catch (err: any) {
       const errorMsg = err.response?.data?.detail || 'Failed to update profile.';
-      setMessage({ type: 'error', text: errorMsg });
+      notify({ type: 'error', title: 'Profile', message: errorMsg });
     } finally {
       setSaving(false);
     }
@@ -299,15 +298,6 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role }) => {
         </div>
 
         <div className="p-8">
-          {message && (
-            <div className={`mb-6 p-4 rounded-lg flex items-center gap-2 ${
-              message.type === 'success' ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200'
-            }`}>
-              {message.type === 'success' ? <CheckCircle size={18} /> : <CheckCircle size={18} className="rotate-180" />}
-              {message.text}
-            </div>
-          )}
-
           <div className="flex flex-col items-center mb-8">
             <div className="relative group cursor-pointer" onClick={handleAvatarClick}>
               <div className={`w-32 h-32 rounded-full overflow-hidden border-4 ${role === 'teacher' ? 'border-emerald-100' : 'border-indigo-100'} bg-slate-50`}>

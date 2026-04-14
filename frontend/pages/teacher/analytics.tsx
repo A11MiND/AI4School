@@ -113,7 +113,7 @@ const AnalyticsDashboard: React.FC = () => {
   useEffect(() => {
     const fetchClasses = async () => {
       try {
-        const res = await api.get('/classes/');
+        const res = await api.get('/classes');
         setClasses(res.data || []);
       } catch (error) {
         console.error('Failed to fetch classes:', error);

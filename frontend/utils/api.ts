@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { API_BASE_URL } from './config';
+import { clearAuthForPath, isJwtExpired } from './auth';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -22,11 +23,18 @@ function pickTokenByPath(path: string): string | null {
 
 api.interceptors.request.use((config) => {
   let token = null;
+  let path = '/';
 
   // Context-aware token selection with shared-page fallback.
   if (typeof window !== 'undefined') {
-    const path = window.location.pathname;
+    path = window.location.pathname;
     token = pickTokenByPath(path);
+  }
+
+  if (token && typeof window !== 'undefined' && isJwtExpired(token)) {
+    const redirectTo = clearAuthForPath(path);
+    window.location.href = redirectTo;
+    return Promise.reject(new Error('Token expired'));
   }
 
   if (token) {
@@ -48,17 +56,8 @@ api.interceptors.response.use(
 
         // Clear specific tokens based on context to avoid logging out everyone.
         const path = window.location.pathname;
-        if (path.startsWith('/teacher')) {
-          localStorage.removeItem('teacher_token');
-          window.location.href = '/teacher/login';
-        } else if (path.startsWith('/student')) {
-          localStorage.removeItem('student_token');
-          window.location.href = '/student/login';
-        } else {
-          localStorage.removeItem('token');
-          localStorage.removeItem('role');
-          window.location.href = '/';
-        }
+        const redirectTo = clearAuthForPath(path);
+        window.location.href = redirectTo;
       }
     }
     return Promise.reject(error);
