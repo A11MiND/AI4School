@@ -74,6 +74,14 @@ def _generate_invite_code(db: Session, length: int = 8) -> str:
     raise HTTPException(status_code=500, detail="Failed to generate invite code")
 
 
+def _to_utc_aware(value: Optional[datetime.datetime]) -> Optional[datetime.datetime]:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=datetime.timezone.utc)
+    return value.astimezone(datetime.timezone.utc)
+
+
 def _get_current_invite_code(db: Session, class_id: int) -> Optional[str]:
     now = datetime.datetime.now(datetime.timezone.utc)
     row = db.query(ClassInviteCode).filter(
@@ -82,7 +90,8 @@ def _get_current_invite_code(db: Session, class_id: int) -> Optional[str]:
     ).order_by(ClassInviteCode.created_at.desc()).first()
     if not row:
         return None
-    if row.expires_at is not None and row.expires_at < now:
+    expires_at = _to_utc_aware(row.expires_at)
+    if expires_at is not None and expires_at < now:
         return None
     if row.max_uses is not None and row.used_count >= row.max_uses:
         return None
@@ -192,7 +201,8 @@ def refresh_invite_code(
     ).all()
     now = datetime.datetime.now(datetime.timezone.utc)
     for code_row in active_codes:
-        if code_row.expires_at is not None and code_row.expires_at < now:
+        expires_at = _to_utc_aware(code_row.expires_at)
+        if expires_at is not None and expires_at < now:
             continue
         code_row.revoked = True
         code_row.revoked_at = now
@@ -294,7 +304,8 @@ def join_class_with_code(payload: JoinClassRequest, db: Session = Depends(get_db
         raise HTTPException(status_code=400, detail="Invite code is revoked")
 
     now = datetime.datetime.now(datetime.timezone.utc)
-    if invite.expires_at is not None and invite.expires_at < now:
+    expires_at = _to_utc_aware(invite.expires_at)
+    if expires_at is not None and expires_at < now:
         raise HTTPException(status_code=400, detail="Invite code has expired")
     if invite.max_uses is not None and invite.used_count >= invite.max_uses:
         raise HTTPException(status_code=400, detail="Invite code has reached usage limit")

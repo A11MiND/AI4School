@@ -221,13 +221,6 @@ def list_documents(
 
     return docs
 
-@router.get("/{document_id}")
-def get_document(document_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-     doc = db.query(Document).filter(Document.id == document_id).first()
-     if not doc:
-         raise HTTPException(status_code=404, detail="Document not found")
-     return doc
-
 
 def _ensure_document_access(doc: Document, current_user: User):
     if current_user.role == "admin":
@@ -245,6 +238,14 @@ def list_folders(db: Session = Depends(get_db), current_user: User = Depends(get
     if current_user.role == "teacher":
         query = query.filter(Document.uploaded_by == current_user.id)
     return query.order_by(Document.created_at.asc()).all()
+
+
+@router.get("/{document_id}")
+def get_document(document_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+     doc = db.query(Document).filter(Document.id == document_id).first()
+     if not doc:
+         raise HTTPException(status_code=404, detail="Document not found")
+     return doc
 
 
 @router.patch("/{document_id}")
