@@ -68,10 +68,34 @@ def _generate_invite_code(db: Session, length: int = 8) -> str:
     alphabet = string.ascii_uppercase + string.digits
     for _ in range(20):
         candidate = "".join(secrets.choice(alphabet) for _ in range(length))
-        exists = db.query(ClassModel).filter(ClassModel.invite_code == candidate).first()
+        exists = db.query(ClassInviteCode).filter(ClassInviteCode.code == candidate).first()
         if not exists:
             return candidate
     raise HTTPException(status_code=500, detail="Failed to generate invite code")
+
+
+def _get_current_invite_code(db: Session, class_id: int) -> Optional[str]:
+    now = datetime.datetime.now(datetime.timezone.utc)
+    row = db.query(ClassInviteCode).filter(
+        ClassInviteCode.class_id == class_id,
+        ClassInviteCode.revoked == False,
+    ).order_by(ClassInviteCode.created_at.desc()).first()
+    if not row:
+        return None
+    if row.expires_at is not None and row.expires_at < now:
+        return None
+    if row.max_uses is not None and row.used_count >= row.max_uses:
+        return None
+    return row.code
+
+
+def _serialize_class(db: Session, class_row: ClassModel):
+    return {
+        "id": class_row.id,
+        "name": class_row.name,
+        "teacher_id": class_row.teacher_id,
+        "invite_code": _get_current_invite_code(db, class_row.id),
+    }
 
 
 def _build_expiry(expires_in_hours: Optional[int]) -> Optional[datetime.datetime]:
@@ -82,7 +106,7 @@ def _build_expiry(expires_in_hours: Optional[int]) -> Optional[datetime.datetime
 
 def _create_invite_code_record(
     db: Session,
-    class_row: ClassModel,
+    class_id: int,
     created_by: int,
     expires_in_hours: Optional[int],
     one_time: bool,
@@ -93,7 +117,7 @@ def _create_invite_code_record(
         raise HTTPException(status_code=400, detail="max_uses must be positive")
 
     invite = ClassInviteCode(
-        class_id=class_row.id,
+        class_id=class_id,
         code=_generate_invite_code(db),
         created_by=created_by,
         expires_at=_build_expiry(expires_in_hours),
@@ -102,7 +126,6 @@ def _create_invite_code_record(
         revoked=False,
     )
     db.add(invite)
-    class_row.invite_code = invite.code
     return invite
 
 @router.get("")
@@ -110,14 +133,17 @@ def _create_invite_code_record(
 def list_classes(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     # Teachers see their own classes
     if current_user.role == "teacher":
-        return db.query(ClassModel).filter(ClassModel.teacher_id == current_user.id).all()
+        classes = db.query(ClassModel).filter(ClassModel.teacher_id == current_user.id).all()
+        return [_serialize_class(db, c) for c in classes]
     # Students see classes they are enrolled in
     if current_user.role == "student":
         # Join ClassModel with StudentClass to find enrolled classes
-        return db.query(ClassModel).join(StudentClass).filter(StudentClass.user_id == current_user.id).all()
+        classes = db.query(ClassModel).join(StudentClass).filter(StudentClass.user_id == current_user.id).all()
+        return [_serialize_class(db, c) for c in classes]
         
     # Admin sees all (or logic can vary)
-    return db.query(ClassModel).all()
+    classes = db.query(ClassModel).all()
+    return [_serialize_class(db, c) for c in classes]
 
 @router.post("")
 @router.post("/")
@@ -133,7 +159,7 @@ def create_class(class_data: ClassCreate, db: Session = Depends(get_db), current
     db.flush()
     _create_invite_code_record(
         db=db,
-        class_row=new_class,
+        class_id=new_class.id,
         created_by=current_user.id,
         expires_in_hours=168,
         one_time=False,
@@ -141,7 +167,7 @@ def create_class(class_data: ClassCreate, db: Session = Depends(get_db), current
     )
     db.commit()
     db.refresh(new_class)
-    return new_class
+    return _serialize_class(db, new_class)
 
 
 @router.post("/{class_id}/invite-code/refresh")
@@ -173,7 +199,7 @@ def refresh_invite_code(
 
     invite = _create_invite_code_record(
         db=db,
-        class_row=class_,
+        class_id=class_.id,
         created_by=current_user.id,
         expires_in_hours=payload.expires_in_hours,
         one_time=payload.one_time,
@@ -201,7 +227,7 @@ def create_invite_code(
 
     invite = _create_invite_code_record(
         db=db,
-        class_row=class_,
+        class_id=class_.id,
         created_by=current_user.id,
         expires_in_hours=payload.expires_in_hours,
         one_time=payload.one_time,
@@ -248,8 +274,6 @@ def revoke_invite_code(invite_id: int, db: Session = Depends(get_db), current_us
 
     invite.revoked = True
     invite.revoked_at = datetime.datetime.now(datetime.timezone.utc)
-    if class_.invite_code == invite.code:
-        class_.invite_code = None
     db.commit()
     return {"message": "Invite code revoked", "id": invite.id}
 
