@@ -1,5 +1,4 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from pydantic import BaseModel
@@ -493,7 +492,7 @@ def delete_class(class_id: int, db: Session = Depends(get_db), current_user: Use
     try:
         db.delete(cls)
         db.commit()
-    except SQLAlchemyError:
+    except Exception:
         db.rollback()
         raise HTTPException(status_code=400, detail="Cannot delete class. It may have papers or students assigned. Please remove them first.")
         
