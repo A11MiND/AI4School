@@ -1420,14 +1420,27 @@ def get_paper(
     # 1. Try to find assignment (Student/General)
     assign = None
     if current_user.role == "student":
-        assign = _resolve_student_assignment_access(
-            db=db,
-            paper_id=paper_id,
-            student_id=current_user.id,
-            assignment_id=assignment_id,
-        )
-        if assign is None:
-            raise HTTPException(status_code=403, detail="Not assigned to this paper")
+        if paper.class_id is not None:
+            enrolled = db.query(StudentClass).filter(
+                StudentClass.user_id == current_user.id,
+                StudentClass.class_id == paper.class_id,
+            ).first()
+            if enrolled is None:
+                raise HTTPException(status_code=403, detail="Not assigned to this paper")
+        if assignment_id is not None:
+            assign = _resolve_student_assignment_access(
+                db=db,
+                paper_id=paper_id,
+                student_id=current_user.id,
+                assignment_id=assignment_id,
+            )
+            if assign is None:
+                raise HTTPException(status_code=403, detail="Not assigned to this paper")
+        else:
+            assign = db.query(Assignment).filter(
+                Assignment.paper_id == paper_id,
+                Assignment.class_id == paper.class_id,
+            ).first()
     elif assignment_id is not None:
         assign = db.query(Assignment).filter(Assignment.id == assignment_id, Assignment.paper_id == paper_id).first()
     

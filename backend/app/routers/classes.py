@@ -481,7 +481,14 @@ def add_students_bulk(
 
 @router.delete("/{class_id}")
 def delete_class(class_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    cls = _get_managed_class_or_403(db, class_id, current_user)
+    if current_user.role not in {"teacher", "admin"}:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    cls = db.query(ClassModel).filter(ClassModel.id == class_id).first()
+    if not cls:
+        raise HTTPException(status_code=404, detail="Class not found")
+    if current_user.role == "teacher" and cls.teacher_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not your class")
 
     try:
         db.delete(cls)

@@ -91,7 +91,7 @@ def test_delete_class_commit_failure(client, db_session, monkeypatch):
     db_session.add(class_)
     db_session.commit()
 
-    def fail_commit():
+    def fail_commit(self, *args, **kwargs):
         raise Exception("fail")
 
     from sqlalchemy.orm import Session
