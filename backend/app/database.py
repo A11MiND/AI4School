@@ -9,10 +9,24 @@ SQLALCHEMY_DATABASE_URL = os.getenv(
     "postgresql://postgres:postgres@localhost/ai4school"
 )
 
+if "dpg-" in SQLALCHEMY_DATABASE_URL and "sslmode=" not in SQLALCHEMY_DATABASE_URL:
+    delimiter = "&" if "?" in SQLALCHEMY_DATABASE_URL else "?"
+    SQLALCHEMY_DATABASE_URL = f"{SQLALCHEMY_DATABASE_URL}{delimiter}sslmode=require"
+
 # SQLite needs specific connect_args to allow multiple threads, Postgres does not
 connect_args = {"check_same_thread": False} if "sqlite" in SQLALCHEMY_DATABASE_URL else {}
 
-engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args=connect_args)
+engine_kwargs = {
+    "connect_args": connect_args,
+}
+if "sqlite" not in SQLALCHEMY_DATABASE_URL:
+    # Keep pooled connections healthy after idle periods on hosted Postgres.
+    engine_kwargs.update({
+        "pool_pre_ping": True,
+        "pool_recycle": 300,
+    })
+
+engine = create_engine(SQLALCHEMY_DATABASE_URL, **engine_kwargs)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 Base = declarative_base()

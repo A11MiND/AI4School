@@ -230,6 +230,18 @@ def _ensure_document_access(doc: Document, current_user: User):
     raise HTTPException(status_code=403, detail="Not authorized")
 
 
+def _student_can_access_document(db: Session, document_id: int, student_id: int) -> bool:
+    visible_for_student = db.query(DocumentClassVisibility).join(
+        StudentClass,
+        StudentClass.class_id == DocumentClassVisibility.class_id,
+    ).filter(
+        DocumentClassVisibility.document_id == document_id,
+        DocumentClassVisibility.visible == True,
+        StudentClass.user_id == student_id,
+    ).first()
+    return visible_for_student is not None
+
+
 @router.get("/folders", response_model=List[DocumentResponse])
 def list_folders(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     if current_user.role not in {"teacher", "admin"}:
@@ -242,10 +254,19 @@ def list_folders(db: Session = Depends(get_db), current_user: User = Depends(get
 
 @router.get("/{document_id}")
 def get_document(document_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-     doc = db.query(Document).filter(Document.id == document_id).first()
+     doc = db.query(Document).filter(Document.id == document_id, Document.is_deleted == False).first()
      if not doc:
          raise HTTPException(status_code=404, detail="Document not found")
-     return doc
+
+     if current_user.role == "admin":
+         return doc
+     if current_user.role == "teacher":
+         _ensure_document_access(doc, current_user)
+         return doc
+     if current_user.role == "student" and _student_can_access_document(db, doc.id, current_user.id):
+         return doc
+
+     raise HTTPException(status_code=403, detail="Not authorized")
 
 
 @router.patch("/{document_id}")
@@ -329,6 +350,7 @@ def delete_document(
     doc = db.query(Document).filter(Document.id == document_id).first()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
+    _ensure_document_access(doc, current_user)
     targets = _collect_descendants(db, doc.id)
 
     if hard:
@@ -372,6 +394,7 @@ def set_document_visibility(
     doc = db.query(Document).filter(Document.id == document_id, Document.is_deleted == False).first()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
+    _ensure_document_access(doc, current_user)
 
     class_row = db.query(ClassModel).filter(ClassModel.id == payload.class_id).first()
     if not class_row:
@@ -401,18 +424,16 @@ def download_document(doc_id: int, db: Session = Depends(get_db), current_user: 
     doc = db.query(Document).filter(Document.id == doc_id).first()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
+    if doc.is_deleted:
+        raise HTTPException(status_code=404, detail="Document not found")
 
-    if current_user.role not in {"teacher", "admin"}:
-        visible_for_student = db.query(DocumentClassVisibility).join(
-            StudentClass,
-            StudentClass.class_id == DocumentClassVisibility.class_id,
-        ).filter(
-            DocumentClassVisibility.document_id == doc.id,
-            DocumentClassVisibility.visible == True,
-            StudentClass.user_id == current_user.id,
-        ).first()
-        if visible_for_student is None:
+    if current_user.role == "teacher":
+        _ensure_document_access(doc, current_user)
+    elif current_user.role == "student":
+        if not _student_can_access_document(db, doc.id, current_user.id):
             raise HTTPException(status_code=403, detail="Not authorized")
+    elif current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Not authorized")
 
     if not doc.file_path or not os.path.exists(doc.file_path):
         raise HTTPException(status_code=404, detail="File not found on server")

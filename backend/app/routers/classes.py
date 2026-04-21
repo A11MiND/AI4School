@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from pydantic import BaseModel
@@ -136,6 +137,17 @@ def _create_invite_code_record(
     )
     db.add(invite)
     return invite
+
+
+def _get_managed_class_or_403(db: Session, class_id: int, current_user: User) -> ClassModel:
+    class_ = db.query(ClassModel).filter(ClassModel.id == class_id).first()
+    if not class_:
+        raise HTTPException(status_code=404, detail="Class not found")
+    if current_user.role not in {"teacher", "admin"}:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    if current_user.role == "teacher" and class_.teacher_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not your class")
+    return class_
 
 @router.get("")
 @router.get("/")
@@ -328,10 +340,7 @@ def join_class_with_code(payload: JoinClassRequest, db: Session = Depends(get_db
 
 @router.get("/{class_id}/students")
 def get_class_students(class_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    # Verify permission...
-    class_ = db.query(ClassModel).filter(ClassModel.id == class_id).first()
-    if not class_:
-        raise HTTPException(status_code=404, detail="Class not found")
+    class_ = _get_managed_class_or_403(db, class_id, current_user)
         
     # Using the relationship defined in models/class_model.py: students = relationship("StudentClass", ...)
     # students is a list of StudentClass association objects
@@ -346,12 +355,7 @@ def get_class_students(class_id: int, db: Session = Depends(get_db), current_use
 
 @router.post("/{class_id}/students")
 def add_student(class_id: int, student: StudentAdd, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    # 1. Check class ownership
-    class_ = db.query(ClassModel).filter(ClassModel.id == class_id).first()
-    if not class_:
-        raise HTTPException(status_code=404, detail="Class not found")
-    if current_user.role == "teacher" and class_.teacher_id != current_user.id:
-         raise HTTPException(status_code=403, detail="Not your class")
+    _get_managed_class_or_403(db, class_id, current_user)
 
     # 2. Find student user
     user = db.query(User).filter(User.username == student.username).first()
@@ -379,11 +383,7 @@ def add_students_bulk(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    class_ = db.query(ClassModel).filter(ClassModel.id == class_id).first()
-    if not class_:
-        raise HTTPException(status_code=404, detail="Class not found")
-    if current_user.role == "teacher" and class_.teacher_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Not your class")
+    _get_managed_class_or_403(db, class_id, current_user)
 
     if not payload.students:
         raise HTTPException(status_code=400, detail="students cannot be empty")
@@ -481,27 +481,12 @@ def add_students_bulk(
 
 @router.delete("/{class_id}")
 def delete_class(class_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    if current_user.role != "teacher" and current_user.role != "admin":
-        raise HTTPException(status_code=403, detail="Not authorized")
-    
-    cls = db.query(ClassModel).filter(ClassModel.id == class_id).first()
-    if not cls:
-        raise HTTPException(status_code=404, detail="Class not found")
-        
-    if current_user.role == "teacher" and cls.teacher_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Not your class")
+    cls = _get_managed_class_or_403(db, class_id, current_user)
 
-    # Check for dependent Papers and block deletion or cascade (here we block for safety, or we could assist)
-    # But since user wants to fix the error, let's catch it.
-    # Better yet, let's allow it but warn, or cascade manually if needed.
-    # The user was getting a 500 error. The best fix for a smooth UX is to catch the IntegrityError 
-    # and return a 400 saying "Cannot delete class with existing papers". 
-    # OR we can cascade delete. Let's do cascade delete to be user friendly as this is a "Test" environment mostly.
-    
     try:
         db.delete(cls)
         db.commit()
-    except Exception as e:
+    except SQLAlchemyError:
         db.rollback()
         raise HTTPException(status_code=400, detail="Cannot delete class. It may have papers or students assigned. Please remove them first.")
         
@@ -509,12 +494,7 @@ def delete_class(class_id: int, db: Session = Depends(get_db), current_user: Use
 
 @router.delete("/{class_id}/students/{student_id}")
 def remove_student(class_id: int, student_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    # Verify class ownership
-    cls = db.query(ClassModel).filter(ClassModel.id == class_id).first()
-    if not cls:
-        raise HTTPException(status_code=404, detail="Class not found")
-    if current_user.role == "teacher" and cls.teacher_id != current_user.id:
-         raise HTTPException(status_code=403, detail="Not your class")
+    _get_managed_class_or_403(db, class_id, current_user)
          
     assoc = db.query(StudentClass).filter(StudentClass.class_id == class_id, StudentClass.user_id == student_id).first()
     if not assoc:

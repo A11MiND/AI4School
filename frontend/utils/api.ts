@@ -6,6 +6,11 @@ const api = axios.create({
   baseURL: API_BASE_URL,
 });
 
+function isTokenEndpoint(url?: string): boolean {
+  const requestUrl = String(url || '');
+  return /(^|\/)token(\?|$)/.test(requestUrl);
+}
+
 function pickTokenByPath(path: string): string | null {
   const teacherToken = localStorage.getItem('teacher_token');
   const studentToken = localStorage.getItem('student_token');
@@ -22,6 +27,14 @@ function pickTokenByPath(path: string): string | null {
 }
 
 api.interceptors.request.use((config) => {
+  if (isTokenEndpoint(config.url)) {
+    // Login endpoint must not inherit any existing role token.
+    if (config.headers && 'Authorization' in config.headers) {
+      delete config.headers.Authorization;
+    }
+    return config;
+  }
+
   let token = null;
   let path = '/';
 
@@ -50,7 +63,7 @@ api.interceptors.response.use(
       if (typeof window !== 'undefined') {
         const requestUrl = String(error?.config?.url || '');
         // Don't globally clear auth state for expected login failures.
-        if (requestUrl.includes('/token')) {
+        if (isTokenEndpoint(requestUrl)) {
           return Promise.reject(error);
         }
 

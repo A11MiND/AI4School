@@ -36,3 +36,4 @@ backend/test.db
 docs/_build/
 backend/verdant-legacy-473707-g3-78ae41511d7f.json
 .env
+scripts/publish_demo.sh

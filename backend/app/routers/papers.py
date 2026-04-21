@@ -318,6 +318,45 @@ def _validate_student_assignment_target(assign: Assignment, student_id: int, db:
             raise HTTPException(status_code=403, detail="Student is not in the assigned class")
 
 
+def _resolve_student_assignment_access(
+    db: Session,
+    paper_id: int,
+    student_id: int,
+    assignment_id: Optional[int],
+) -> Optional[Assignment]:
+    if assignment_id is not None:
+        assign = db.query(Assignment).filter(
+            Assignment.id == assignment_id,
+            Assignment.paper_id == paper_id,
+        ).first()
+        if not assign:
+            return None
+        _validate_student_assignment_target(assign, student_id, db)
+        return assign
+
+    assign = db.query(Assignment).filter(
+        Assignment.paper_id == paper_id,
+        Assignment.student_id == student_id,
+    ).first()
+    if assign:
+        return assign
+
+    class_ids = [
+        class_id
+        for (class_id,) in db.query(StudentClass.class_id).filter(StudentClass.user_id == student_id).all()
+    ]
+    if not class_ids:
+        return None
+
+    assign = db.query(Assignment).filter(
+        Assignment.paper_id == paper_id,
+        Assignment.class_id.in_(class_ids),
+    ).first()
+    if assign:
+        _validate_student_assignment_target(assign, student_id, db)
+    return assign
+
+
 def _enforce_assignment_limits(assign: Assignment, student_id: int, db: Session) -> None:
     deadline = _normalize_assignment_deadline(assign.deadline)
     if deadline is not None and datetime.now(timezone.utc) > deadline:
@@ -616,6 +655,20 @@ def get_writing_paper(
         raise HTTPException(status_code=404, detail="Paper not found")
     if paper.paper_type != "writing":
         raise HTTPException(status_code=400, detail="Not a writing paper")
+
+    if current_user.role == "teacher" and paper.created_by != current_user.id:
+        raise HTTPException(status_code=403, detail="Not your paper")
+    if current_user.role == "student":
+        student_assign = _resolve_student_assignment_access(
+            db=db,
+            paper_id=paper_id,
+            student_id=current_user.id,
+            assignment_id=assignment_id,
+        )
+        if student_assign is None:
+            raise HTTPException(status_code=403, detail="Not assigned to this paper")
+    elif current_user.role not in {"teacher", "admin"}:
+        raise HTTPException(status_code=403, detail="Not authorized")
 
     questions = db.query(Question).filter(Question.paper_id == paper_id).all()
     out_questions = []
@@ -1351,6 +1404,11 @@ def get_paper(
     paper = db.query(Paper).filter(Paper.id == paper_id).first()
     if not paper:
          raise HTTPException(status_code=404, detail="Paper not found")
+
+    if current_user.role == "teacher" and paper.created_by != current_user.id:
+        raise HTTPException(status_code=403, detail="Not your paper")
+    if current_user.role not in {"student", "teacher", "admin"}:
+        raise HTTPException(status_code=403, detail="Not authorized")
     
     # Context: Is this a student taking the paper?
     assignment_info = None
@@ -1361,15 +1419,17 @@ def get_paper(
     
     # 1. Try to find assignment (Student/General)
     assign = None
-    if assignment_id is not None:
+    if current_user.role == "student":
+        assign = _resolve_student_assignment_access(
+            db=db,
+            paper_id=paper_id,
+            student_id=current_user.id,
+            assignment_id=assignment_id,
+        )
+        if assign is None:
+            raise HTTPException(status_code=403, detail="Not assigned to this paper")
+    elif assignment_id is not None:
         assign = db.query(Assignment).filter(Assignment.id == assignment_id, Assignment.paper_id == paper_id).first()
-    if not assign:
-        assign = db.query(Assignment).filter(Assignment.paper_id == paper_id, Assignment.student_id == current_user.id).first()
-    if not assign:
-        student_classes = db.query(StudentClass).filter(StudentClass.user_id == current_user.id).all()
-        class_ids = [sc.class_id for sc in student_classes]
-        if class_ids:
-            assign = db.query(Assignment).filter(Assignment.paper_id == paper_id, Assignment.class_id.in_(class_ids)).first()
     
     if assign:
         assignment_info = {
@@ -1379,30 +1439,31 @@ def get_paper(
         }
     
     # 2. Check existing submission
-    submissions_query = db.query(Submission).filter(
-        Submission.paper_id == paper_id,
-        Submission.student_id == current_user.id
-    )
-    submissions = []
-    if assignment_id is not None:
-        submissions = submissions_query.filter(Submission.assignment_id == assignment_id).all()
-    elif assign and assign.id:
-        submissions = submissions_query.filter(Submission.assignment_id == assign.id).all()
-        if not submissions:
+    if current_user.role == "student":
+        submissions_query = db.query(Submission).filter(
+            Submission.paper_id == paper_id,
+            Submission.student_id == current_user.id
+        )
+        submissions = []
+        if assignment_id is not None:
+            submissions = submissions_query.filter(Submission.assignment_id == assignment_id).all()
+        elif assign and assign.id:
+            submissions = submissions_query.filter(Submission.assignment_id == assign.id).all()
+            if not submissions:
+                submissions = submissions_query.all()
+        else:
             submissions = submissions_query.all()
-    else:
-        submissions = submissions_query.all()
-    if submissions:
-        # Get latest
-        last_sub = submissions[-1]
-        answers = db.query(Answer).filter(Answer.submission_id == last_sub.id).all()
-        submission_info = {
-            "id": last_sub.id,
-            "score": last_sub.score,
-            "submitted_at": last_sub.submitted_at,
-            "attempt_count": len(submissions),
-            "answers": {a.question_id: a.answer for a in answers}
-        }
+        if submissions:
+            # Get latest
+            last_sub = submissions[-1]
+            answers = db.query(Answer).filter(Answer.submission_id == last_sub.id).all()
+            submission_info = {
+                "id": last_sub.id,
+                "score": last_sub.score,
+                "submitted_at": last_sub.submitted_at,
+                "attempt_count": len(submissions),
+                "answers": {a.question_id: a.answer for a in answers}
+            }
 
     # Fetch questions
     questions = db.query(Question).filter(Question.paper_id == paper_id).all()
