@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 import AnalyticsDashboard, { getQuestionTypeLabel, sortWeakAreaStudents } from '../pages/teacher/analytics';
 import api from '../utils/api';
 
@@ -21,6 +21,9 @@ describe('AnalyticsDashboard', () => {
 
   it('renders class filter and weak areas', async () => {
     mockedApi.get.mockImplementation((url) => {
+      if (url === '/analytics/filter-options') {
+        return Promise.resolve({ data: { subjects: ['reading', 'listening', 'writing', 'speaking'], papers: [], students: [] } });
+      }
       if (url === '/classes') {
         return Promise.resolve({ data: [{ id: 1, name: 'Class A' }] });
       }
@@ -59,6 +62,9 @@ describe('AnalyticsDashboard', () => {
 
   it('renders empty states when no analytics data', async () => {
     mockedApi.get.mockImplementation((url) => {
+      if (url === '/analytics/filter-options') {
+        return Promise.resolve({ data: { subjects: ['reading', 'listening', 'writing', 'speaking'], papers: [], students: [] } });
+      }
       if (url === '/classes') {
         return Promise.resolve({ data: [] });
       }
@@ -89,6 +95,9 @@ describe('AnalyticsDashboard', () => {
 
   it('handles null class response', async () => {
     mockedApi.get.mockImplementation((url) => {
+      if (url === '/analytics/filter-options') {
+        return Promise.resolve({ data: { subjects: ['reading', 'listening', 'writing', 'speaking'], papers: [], students: [] } });
+      }
       if (url === '/classes') {
         return Promise.resolve({ data: null });
       }
@@ -115,6 +124,9 @@ describe('AnalyticsDashboard', () => {
 
   it('updates sorting and shows unknown question type label', async () => {
     mockedApi.get.mockImplementation((url) => {
+      if (url === '/analytics/filter-options') {
+        return Promise.resolve({ data: { subjects: ['reading', 'listening', 'writing', 'speaking'], papers: [], students: [] } });
+      }
       if (url === '/classes') {
         return Promise.resolve({ data: [{ id: 1, name: 'Class A' }] });
       }
@@ -151,8 +163,20 @@ describe('AnalyticsDashboard', () => {
     expect(screen.getByText('Unknown')).toBeInTheDocument();
   });
 
-  it('filters analytics by class selection', async () => {
+  it('filters analytics by class, subject and paper selection', async () => {
     mockedApi.get.mockImplementation((url, config) => {
+      if (url === '/analytics/filter-options') {
+        if (config?.params?.paper_type === 'reading') {
+          return Promise.resolve({
+            data: {
+              subjects: ['reading', 'listening', 'writing', 'speaking'],
+              papers: [{ id: 11, title: 'Reading Paper A', paper_type: 'reading' }],
+              students: [{ id: 21, username: 'Alice' }]
+            }
+          });
+        }
+        return Promise.resolve({ data: { subjects: ['reading', 'listening', 'writing', 'speaking'], papers: [], students: [] } });
+      }
       if (url === '/classes') {
         return Promise.resolve({ data: [{ id: 1, name: 'Class A' }] });
       }
@@ -179,15 +203,27 @@ describe('AnalyticsDashboard', () => {
     render(<AnalyticsDashboard />);
 
     await waitFor(() => expect(screen.getByText('Class Performance Analytics')).toBeInTheDocument());
-    const classSelect = screen.getAllByRole('combobox')[0];
+    const classSelect = screen.getByLabelText('Class');
     fireEvent.change(classSelect, { target: { value: '1' } });
+    await waitFor(() => expect(screen.getByLabelText('Subject')).toBeInTheDocument());
+    const subjectSelect = screen.getByLabelText('Subject');
+    fireEvent.change(subjectSelect, { target: { value: 'reading' } });
 
-    await waitFor(() => expect(mockedApi.get).toHaveBeenCalledWith('/analytics/overview', { params: { class_id: '1' } }));
+    await waitFor(() => expect(screen.getByText('Reading Paper A')).toBeInTheDocument());
+    const paperSelect = screen.getByLabelText('Paper');
+    fireEvent.change(paperSelect, { target: { value: '11' } });
+
+    await waitFor(() => expect(mockedApi.get).toHaveBeenCalledWith('/analytics/overview', {
+      params: { class_id: '1', paper_type: 'reading', paper_id: '11' }
+    }));
   });
 
   it('logs class fetch failure', async () => {
     const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
     mockedApi.get.mockImplementation((url) => {
+      if (url === '/analytics/filter-options') {
+        return Promise.resolve({ data: { subjects: ['reading', 'listening', 'writing', 'speaking'], papers: [], students: [] } });
+      }
       if (url === '/classes') {
         return Promise.reject(new Error('fail'));
       }
@@ -215,6 +251,9 @@ describe('AnalyticsDashboard', () => {
   it('logs analytics fetch failure', async () => {
     const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
     mockedApi.get.mockImplementation((url) => {
+      if (url === '/analytics/filter-options') {
+        return Promise.resolve({ data: { subjects: ['reading', 'listening', 'writing', 'speaking'], papers: [], students: [] } });
+      }
       if (url === '/classes') {
         return Promise.resolve({ data: [] });
       }
@@ -248,6 +287,9 @@ describe('AnalyticsDashboard', () => {
 
   it('sorts weak areas by exams', async () => {
     mockedApi.get.mockImplementation((url) => {
+      if (url === '/analytics/filter-options') {
+        return Promise.resolve({ data: { subjects: ['reading', 'listening', 'writing', 'speaking'], papers: [], students: [] } });
+      }
       if (url === '/classes') {
         return Promise.resolve({ data: [] });
       }
@@ -292,6 +334,9 @@ describe('AnalyticsDashboard', () => {
 
   it('renders weak skills for students and sorts by exams/avg', async () => {
     mockedApi.get.mockImplementation((url) => {
+      if (url === '/analytics/filter-options') {
+        return Promise.resolve({ data: { subjects: ['reading', 'listening', 'writing', 'speaking'], papers: [], students: [] } });
+      }
       if (url === '/classes') {
         return Promise.resolve({ data: [] });
       }
@@ -333,7 +378,10 @@ describe('AnalyticsDashboard', () => {
     fireEvent.change(screen.getByDisplayValue('Highest avg first'), { target: { value: 'exams_desc' } });
 
     await waitFor(() => {
-      const rows = screen.getAllByRole('row').slice(1);
+      const studentsHeading = screen.getByText('Students Needing Attention');
+      const studentsCard = studentsHeading.closest('div')?.parentElement;
+      expect(studentsCard).toBeTruthy();
+      const rows = within(studentsCard as HTMLElement).getAllByRole('row').slice(1);
       expect(rows[0]).toHaveTextContent('Bob');
     });
 

@@ -26,6 +26,12 @@ export default function WritingPaperBuilder() {
     const [docs, setDocs] = useState<DocItem[]>([]);
     const [selectedDocId, setSelectedDocId] = useState<number | null>(null);
     const [useAiGeneration, setUseAiGeneration] = useState(true);
+    const [selectedDocContent, setSelectedDocContent] = useState('');
+    const [loadingDocContent, setLoadingDocContent] = useState(false);
+    const [imageKeywords, setImageKeywords] = useState('');
+    const [customImageKeywords, setCustomImageKeywords] = useState('');
+    const [qwenImagePrompt, setQwenImagePrompt] = useState('');
+    const [generatingImage, setGeneratingImage] = useState(false);
 
     const [showAnswers, setShowAnswers] = useState(false);
     const [requireFullscreen, setRequireFullscreen] = useState(true);
@@ -74,6 +80,9 @@ export default function WritingPaperBuilder() {
                 setTrackFocusLoss(Boolean(cfg.anti_cheat?.track_focus_loss ?? true));
                 setSelectedDocId(cfg.source_document_id ? Number(cfg.source_document_id) : null);
                 setCustomRequirements(cfg.custom_requirements || '');
+                setImageKeywords(cfg.image_keywords || '');
+                setCustomImageKeywords(cfg.custom_image_keywords || '');
+                setQwenImagePrompt(cfg.qwen_image_prompt || '');
 
                 const task1 = (data.questions || []).find((q: any) => q.writing_task_type === 'task1');
                 const task2 = (data.questions || []).find((q: any) => q.writing_task_type === 'task2');
@@ -89,6 +98,60 @@ export default function WritingPaperBuilder() {
         };
         loadPaper();
     }, [paperId]);
+
+    useEffect(() => {
+        if (!selectedDocId) {
+            setSelectedDocContent('');
+            return;
+        }
+        const loadDocContent = async () => {
+            setLoadingDocContent(true);
+            try {
+                const res = await api.get(`/documents/${selectedDocId}`);
+                setSelectedDocContent(String(res.data?.content || '').trim());
+            } catch (error) {
+                console.error(error);
+                setSelectedDocContent('');
+            } finally {
+                setLoadingDocContent(false);
+            }
+        };
+        loadDocContent();
+    }, [selectedDocId]);
+
+    const extractEventKeywords = () => {
+        const source = [task1Prompt, task2Raw, customRequirements, selectedDocContent]
+            .join(' ')
+            .toLowerCase();
+        const tokens = source
+            .replace(/[^a-z0-9\s]/g, ' ')
+            .split(/\s+/)
+            .map((t) => t.trim())
+            .filter(Boolean);
+        const stopWords = new Set([
+            'the', 'and', 'for', 'with', 'that', 'this', 'from', 'into', 'about', 'your', 'their', 'there', 'have',
+            'will', 'should', 'would', 'could', 'task', 'write', 'writing', 'paper', 'student', 'students', 'english',
+            'hkdse', 'part', 'prompt', 'optional', 'choose', 'response', 'words', 'word', 'mode'
+        ]);
+        const counts = new Map<string, number>();
+        for (const token of tokens) {
+            if (token.length < 4 || stopWords.has(token)) continue;
+            counts.set(token, (counts.get(token) || 0) + 1);
+        }
+        const autoKeywords = Array.from(counts.entries())
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 10)
+            .map(([word]) => word)
+            .join(', ');
+        setImageKeywords(autoKeywords);
+        const merged = [autoKeywords, customImageKeywords].filter(Boolean).join(', ');
+        setQwenImagePrompt(merged ? `Illustration for an HKDSE writing prompt scene, key events: ${merged}` : '');
+    };
+
+    const applyCustomKeywords = () => {
+        const merged = [imageKeywords, customImageKeywords].filter(Boolean).join(', ');
+        setQwenImagePrompt(merged ? `Illustration for an HKDSE writing prompt scene, key events: ${merged}` : '');
+    };
 
     const handleGenerate = async () => {
         if (!useAiGeneration) return;
@@ -115,6 +178,7 @@ export default function WritingPaperBuilder() {
             const payload = {
                 selected_task_mode: selectedTaskMode,
                 source_document_id: selectedDocId,
+                source_text: selectedDocContent || undefined,
                 custom_requirements: customRequirements,
                 ai_provider: storedProvider,
                 ai_model: storedModel,
@@ -140,6 +204,41 @@ export default function WritingPaperBuilder() {
         }
     };
 
+    const handleGeneratePromptAsset = async () => {
+        const prompt = qwenImagePrompt.trim();
+        if (!prompt) {
+            alert('Please enter or generate a Qwen-image prompt first.');
+            return;
+        }
+        const qwenApiKey = localStorage.getItem('qwen_api_key') || '';
+        const qwenBaseUrl = localStorage.getItem('qwen_base_url') || 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1';
+        if (!qwenApiKey) {
+            alert('Please set Qwen API key in Profile Settings first.');
+            return;
+        }
+        setGeneratingImage(true);
+        try {
+            const res = await api.post('/papers/writing/generate-image', {
+                prompt,
+                model: 'qwen-image',
+                api_key: qwenApiKey,
+                base_url: qwenBaseUrl,
+                size: '1024x1024',
+                n: 1,
+            });
+            const generatedUrl = String(res.data?.prompt_asset_url || '').trim();
+            if (!generatedUrl) {
+                throw new Error('No image URL returned');
+            }
+            setPromptAssetUrl(generatedUrl);
+        } catch (error: any) {
+            console.error(error);
+            alert(error?.response?.data?.detail || error?.message || 'Failed to generate Qwen-image asset');
+        } finally {
+            setGeneratingImage(false);
+        }
+    };
+
     const handlePublish = async () => {
         if (!title.trim()) return alert('Please enter a paper title');
         if ((selectedTaskMode === 'task1' || selectedTaskMode === 'both') && !task1Prompt.trim()) {
@@ -162,6 +261,9 @@ export default function WritingPaperBuilder() {
                 show_answers: showAnswers,
                 writing_config: {
                     duration_minutes: durationMinutes,
+                    image_keywords: imageKeywords || null,
+                    custom_image_keywords: customImageKeywords || null,
+                    qwen_image_prompt: qwenImagePrompt || null,
                     anti_cheat: {
                         require_fullscreen: requireFullscreen,
                         block_paste: blockPaste,
@@ -260,6 +362,15 @@ export default function WritingPaperBuilder() {
                                 <option key={doc.id} value={doc.id}>{doc.title}</option>
                             ))}
                         </select>
+                        {selectedDocId && (
+                            <p className="text-xs text-slate-500 mt-1">
+                                {loadingDocContent
+                                    ? 'Loading source document text...'
+                                    : selectedDocContent
+                                        ? `Loaded source text (${selectedDocContent.length} chars). AI prompt generation will use this content.`
+                                        : 'No extracted text found in this document. Upload txt/docx/pdf with readable text if you want AI to use source text.'}
+                            </p>
+                        )}
                     </div>
 
                     <div>
@@ -310,14 +421,71 @@ export default function WritingPaperBuilder() {
                         </div>
                     )}
 
-                    <div>
-                        <label className="block text-sm font-medium text-slate-700 mb-1">Prompt asset URL (image/pdf, optional)</label>
+                    <div className="space-y-3">
+                        <label className="block text-sm font-medium text-slate-700 mb-1">Qwen-image Prompt Asset (optional)</label>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                            <button
+                                type="button"
+                                onClick={extractEventKeywords}
+                                className="px-4 py-2 bg-indigo-100 text-indigo-800 rounded-lg hover:bg-indigo-200"
+                            >
+                                Extract Event Keywords
+                            </button>
+                            <input
+                                className="md:col-span-2 border border-slate-300 rounded-lg px-3 py-2"
+                                value={imageKeywords}
+                                onChange={(e) => setImageKeywords(e.target.value)}
+                                placeholder="Auto keywords from writing tasks/source doc"
+                            />
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                            <button
+                                type="button"
+                                onClick={applyCustomKeywords}
+                                className="px-4 py-2 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200"
+                            >
+                                Apply Custom Keywords
+                            </button>
+                            <input
+                                className="md:col-span-2 border border-slate-300 rounded-lg px-3 py-2"
+                                value={customImageKeywords}
+                                onChange={(e) => setCustomImageKeywords(e.target.value)}
+                                placeholder="Custom keywords (comma separated)"
+                            />
+                        </div>
+                        <textarea
+                            className="w-full min-h-[80px] border border-slate-300 rounded-lg px-3 py-2"
+                            value={qwenImagePrompt}
+                            onChange={(e) => setQwenImagePrompt(e.target.value)}
+                            placeholder="Qwen-image prompt (editable)"
+                        />
+                        <div>
+                            <button
+                                type="button"
+                                onClick={handleGeneratePromptAsset}
+                                disabled={generatingImage}
+                                className="px-4 py-2 bg-emerald-100 text-emerald-800 rounded-lg hover:bg-emerald-200 disabled:opacity-60"
+                            >
+                                {generatingImage ? 'Generating Qwen-image...' : 'Generate Prompt Asset with Qwen-image'}
+                            </button>
+                        </div>
                         <input
                             className="w-full border border-slate-300 rounded-lg px-3 py-2"
                             value={promptAssetUrl}
                             onChange={(e) => setPromptAssetUrl(e.target.value)}
-                            placeholder="/uploads/xxx.pdf or image URL"
+                            placeholder="Paste generated Qwen-image URL (or PDF/image URL)"
                         />
+                        {promptAssetUrl && (
+                            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                                <p className="text-xs text-slate-500 mb-2">Prompt asset preview</p>
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img
+                                    src={/^https?:\/\//.test(promptAssetUrl) ? promptAssetUrl : `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}${promptAssetUrl}`}
+                                    alt="Prompt asset preview"
+                                    className="max-h-64 rounded-lg border border-slate-200 object-contain bg-white"
+                                />
+                            </div>
+                        )}
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

@@ -5,6 +5,9 @@ import os
 import re
 import random
 import hashlib
+import base64
+import requests
+from uuid import uuid4
 from sqlalchemy.orm import Session
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel
@@ -93,6 +96,15 @@ class WritingPromptGenerateRequest(BaseModel):
     base_url: Optional[str] = None
 
 
+class WritingImageGenerateRequest(BaseModel):
+    prompt: str
+    model: Optional[str] = "qwen-image"
+    api_key: Optional[str] = None
+    base_url: Optional[str] = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+    size: Optional[str] = "1024x1024"
+    n: Optional[int] = 1
+
+
 class WritingResponseItem(BaseModel):
     question_id: int
     answer: str
@@ -150,6 +162,7 @@ class SpeakingPaperCreate(BaseModel):
     max_turns: Optional[int] = 12
     rubric_weights: Optional[Dict[str, float]] = None
     show_answers: Optional[bool] = True
+    runtime_ai: Optional[Dict[str, Any]] = None
 
 
 class SpeakingSessionStartRequest(BaseModel):
@@ -176,6 +189,8 @@ class SpeakingTurnRequest(BaseModel):
     base_url: Optional[str] = None
     voice: Optional[str] = None
     tts_model: Optional[str] = None
+    tts_api_key: Optional[str] = None
+    tts_base_url: Optional[str] = None
 
 
 def _has_audio_model_capability(provider: Optional[str], model: Optional[str]) -> bool:
@@ -607,6 +622,82 @@ def generate_writing_prompt_bundle(
         return generated
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/writing/generate-image")
+def generate_writing_prompt_image(
+    payload: WritingImageGenerateRequest,
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.role not in {"teacher", "admin"}:
+        raise HTTPException(status_code=403, detail="Only teachers can generate writing prompt images")
+
+    prompt = (payload.prompt or "").strip()
+    if not prompt:
+        raise HTTPException(status_code=400, detail="Prompt is required")
+
+    api_key = (payload.api_key or os.getenv("QWEN_API_KEY") or "").strip()
+    if not api_key:
+        raise HTTPException(status_code=400, detail="QWEN API key is required")
+
+    base_url = (
+        payload.base_url
+        or os.getenv("QWEN_BASE_URL")
+        or "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+    ).strip().rstrip("/")
+    if not base_url:
+        raise HTTPException(status_code=400, detail="QWEN base URL is required")
+
+    request_body = {
+        "model": (payload.model or "qwen-image").strip() or "qwen-image",
+        "prompt": prompt,
+        "size": (payload.size or "1024x1024").strip() or "1024x1024",
+        "n": max(1, min(int(payload.n or 1), 4)),
+    }
+    try:
+        response = requests.post(
+            f"{base_url}/images/generations",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json=request_body,
+            timeout=90,
+        )
+        if response.status_code >= 400:
+            detail = ""
+            try:
+                detail = response.json().get("error", {}).get("message") or response.text
+            except Exception:
+                detail = response.text
+            raise HTTPException(status_code=400, detail=f"Qwen-image request failed: {detail[:300]}")
+
+        data = response.json() or {}
+        items = data.get("data") or []
+        if not isinstance(items, list) or len(items) == 0:
+            raise HTTPException(status_code=400, detail="Qwen-image returned no image data")
+
+        first = items[0] or {}
+        image_url = first.get("url") or first.get("image_url")
+        if image_url:
+            return {"prompt_asset_url": image_url}
+
+        b64_data = first.get("b64_json") or first.get("b64")
+        if b64_data:
+            image_bytes = base64.b64decode(b64_data)
+            image_name = f"writing_prompt_{uuid4().hex}.png"
+            image_dir = os.path.join("uploads", "generated")
+            os.makedirs(image_dir, exist_ok=True)
+            image_path = os.path.join(image_dir, image_name)
+            with open(image_path, "wb") as image_file:
+                image_file.write(image_bytes)
+            return {"prompt_asset_url": f"/uploads/generated/{image_name}"}
+
+        raise HTTPException(status_code=400, detail="Qwen-image response does not include url or b64 data")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Failed to generate prompt image: {exc}")
 
 
 @router.post("/speaking/realtime/probe")
@@ -1146,6 +1237,7 @@ def create_speaking_paper(
             "starter_prompt": payload.starter_prompt,
             "max_turns": payload.max_turns,
             "rubric_weights": rubric,
+            "runtime_ai": payload.runtime_ai or {},
             "source": "speaking",
         },
     )
@@ -1185,6 +1277,7 @@ def update_speaking_paper(
         "starter_prompt": payload.starter_prompt,
         "max_turns": payload.max_turns,
         "rubric_weights": rubric,
+        "runtime_ai": payload.runtime_ai or {},
         "source": "speaking",
     }
     db.commit()
@@ -1248,6 +1341,8 @@ def append_speaking_turn(
         raise HTTPException(status_code=404, detail="Session not found")
     if current_user.role == "student" and session.student_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not your speaking session")
+    if (session.status or "active") != "active":
+        raise HTTPException(status_code=400, detail="Session already ended")
 
     role = payload.role.strip().lower()
     if role not in {"student", "examiner", "system"}:
@@ -1272,13 +1367,18 @@ def append_speaking_turn(
     if role == "student":
         scenario = (paper.writing_config or {}).get("scenario") if paper and paper.writing_config else (paper.article_content if paper else "")
         persona = (paper.writing_config or {}).get("examiner_persona") if paper and paper.writing_config else "Friendly examiner"
+        runtime_ai_cfg = (paper.writing_config or {}).get("runtime_ai") if paper and paper.writing_config else {}
         recent_turns = "\n".join([
             f"{t.speaker_role}: {t.text}" for t in active_turns[-6:]
         ])
         summary = session.summary_text or ""
-
-        request_provider = payload.ai_provider or current_user.ai_provider
-        request_model = payload.ai_model or current_user.ai_model
+        paper_owner = None
+        if paper and paper.created_by:
+            paper_owner = db.query(User).filter(User.id == paper.created_by).first()
+        request_provider = payload.ai_provider or (runtime_ai_cfg.get("ai_provider") if isinstance(runtime_ai_cfg, dict) else None) or (paper_owner.ai_provider if paper_owner else None) or current_user.ai_provider
+        request_model = payload.ai_model or (runtime_ai_cfg.get("ai_model") if isinstance(runtime_ai_cfg, dict) else None) or (paper_owner.ai_model if paper_owner else None) or current_user.ai_model
+        request_api_key = payload.api_key or (runtime_ai_cfg.get("api_key") if isinstance(runtime_ai_cfg, dict) else None)
+        request_base_url = payload.base_url or (runtime_ai_cfg.get("base_url") if isinstance(runtime_ai_cfg, dict) else None)
         provider, model = _resolve_ai_config({
             "ai_provider": request_provider,
             "ai_model": request_model,
@@ -1302,8 +1402,8 @@ def append_speaking_turn(
                 user_prompt=user_prompt,
                 temperature=0.4,
                 max_tokens=120,
-                api_key=payload.api_key,
-                base_url=payload.base_url,
+                api_key=request_api_key,
+                base_url=request_base_url,
             ).strip()
             if not examiner_text:
                 examiner_text = "Thanks. Could you tell me more about that?"
@@ -1311,14 +1411,21 @@ def append_speaking_turn(
             examiner_text = "Thanks. Could you tell me more about that?"
 
         examiner_audio_url = None
-        if (request_provider or "").strip().lower() == "qwen":
+        runtime_tts_model = runtime_ai_cfg.get("tts_model") if isinstance(runtime_ai_cfg, dict) else None
+        runtime_tts_api_key = runtime_ai_cfg.get("tts_api_key") if isinstance(runtime_ai_cfg, dict) else None
+        runtime_tts_base_url = runtime_ai_cfg.get("tts_base_url") if isinstance(runtime_ai_cfg, dict) else None
+        runtime_tts_voice = runtime_ai_cfg.get("tts_voice") if isinstance(runtime_ai_cfg, dict) else None
+        tts_model = (payload.tts_model or runtime_tts_model or os.getenv("QWEN_TTS_MODEL") or "").strip()
+        tts_api_key = (payload.tts_api_key or runtime_tts_api_key or os.getenv("QWEN_API_KEY") or "").strip()
+        tts_base_url = (payload.tts_base_url or runtime_tts_base_url or os.getenv("QWEN_BASE_URL") or "https://dashscope-intl.aliyuncs.com/compatible-mode/v1").strip()
+        if tts_model and tts_api_key and _has_audio_model_capability("qwen", tts_model):
             try:
                 examiner_audio_url = synthesize_single_text_to_wav(
                     text=examiner_text,
-                    model=(payload.tts_model or os.getenv("QWEN_TTS_MODEL") or "cosyvoice-v3-plus").strip(),
-                    voice=(payload.voice or os.getenv("QWEN_TTS_VOICE") or "Ethan").strip(),
-                    api_key=(payload.api_key or os.getenv("QWEN_API_KEY") or "").strip(),
-                    base_url=(payload.base_url or os.getenv("QWEN_BASE_URL") or "https://dashscope-intl.aliyuncs.com/compatible-mode/v1").strip(),
+                    model=tts_model,
+                    voice=(payload.voice or runtime_tts_voice or os.getenv("QWEN_TTS_VOICE") or "Ethan").strip(),
+                    api_key=tts_api_key,
+                    base_url=tts_base_url,
                 )
             except Exception:
                 examiner_audio_url = None
@@ -1361,6 +1468,27 @@ def append_speaking_turn(
         "token_estimate": session.token_estimate,
         "compaction_count": session.compaction_count,
     }
+
+
+@router.post("/speaking/sessions/{session_id}/complete")
+def complete_speaking_session(
+    session_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    session = db.query(SpeakingSession).filter(SpeakingSession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if current_user.role == "student" and session.student_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not your speaking session")
+
+    if (session.status or "active") == "completed":
+        return {"session_id": session.id, "status": "completed"}
+
+    session.status = "completed"
+    db.commit()
+    db.refresh(session)
+    return {"session_id": session.id, "status": session.status}
 
 
 @router.get("/speaking/sessions/{session_id}")
@@ -1477,8 +1605,14 @@ def delete_paper(paper_id: int, db: Session = Depends(get_db), current_user: Use
     submission_rows = db.query(Submission.id).filter(Submission.paper_id == paper_id).all()
     submission_ids = [row.id for row in submission_rows]
 
-    question_rows = db.query(Question.id).filter(Question.paper_id == paper_id).all()
-    question_ids = [row.id for row in question_rows]
+    speaking_session_rows = db.query(SpeakingSession.id).filter(SpeakingSession.paper_id == paper_id).all()
+    speaking_session_ids = [row.id for row in speaking_session_rows]
+
+    # Delete speaking conversations first, because speaking_sessions may reference assignments
+    # and papers via foreign keys.
+    if speaking_session_ids:
+        db.query(SpeakingTurn).filter(SpeakingTurn.session_id.in_(speaking_session_ids)).delete(synchronize_session=False)
+        db.query(SpeakingSession).filter(SpeakingSession.id.in_(speaking_session_ids)).delete(synchronize_session=False)
 
     if submission_ids:
         db.query(Answer).filter(Answer.submission_id.in_(submission_ids)).delete(synchronize_session=False)

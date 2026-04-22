@@ -64,6 +64,12 @@ export default function TakePaper() {
             const query = assignmentId ? `?assignment_id=${assignmentId}` : '';
             const res = await api.get(`/papers/${id}${query}`);
             const p = res.data;
+            const paperType = String(p?.paper_type || 'reading').toLowerCase();
+            if (paperType === 'listening' || paperType === 'speaking' || paperType === 'writing') {
+                const assignmentQuery = assignmentId ? `?assignment_id=${assignmentId}` : '';
+                router.replace(`/student/paper/${paperType}/${id}${assignmentQuery}`);
+                return;
+            }
             // Ensure fresh start for "Take Paper" mode
             setPaper({ ...p, submission: null });
 

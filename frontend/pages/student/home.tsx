@@ -40,6 +40,13 @@ export default function StudentHome() {
 
   const activeAssignments = papers.filter(p => p.submitted_count < (p.max_attempts || 1));
   const completedAssignments = papers.filter(p => p.submitted_count > 0);
+  const getPaperStartHref = (paper: any) => {
+      const paperType = (paper?.paper_type || 'reading').toLowerCase();
+      if (paperType === 'writing') return `/student/paper/writing/${paper.id}?assignment_id=${paper.assignment_id}`;
+      if (paperType === 'listening') return `/student/paper/listening/${paper.id}?assignment_id=${paper.assignment_id}`;
+      if (paperType === 'speaking') return `/student/paper/speaking/${paper.id}?assignment_id=${paper.assignment_id}`;
+      return `/student/paper/reading/${paper.id}?assignment_id=${paper.assignment_id}`;
+  };
 
   return (
     <div className="space-y-8">
@@ -81,7 +88,7 @@ export default function StudentHome() {
                                                  <span className="bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded text-xs font-medium">Attempt {p.submitted_count + 1} of {p.max_attempts || 1}</span>
                                              </div>
                                          </div>
-                                         <Link href={`${(p.paper_type || 'reading') === 'writing' ? '/student/paper/writing/' : '/student/paper/reading/'}${p.id}?assignment_id=${p.assignment_id}`}>
+                                         <Link href={getPaperStartHref(p)}>
                                             <button className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700 transition shadow-sm">
                                                 Start <ArrowRight size={16} />
                                             </button>

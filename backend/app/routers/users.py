@@ -3,8 +3,10 @@ from sqlalchemy.orm import Session
 from typing import Optional
 from pydantic import BaseModel
 import requests
+import json
 from ..database import get_db
 from ..models.user import User
+from ..models.user_preference import UserPreference
 from ..auth.jwt import get_current_user, get_password_hash
 import os
 import uuid
@@ -35,6 +37,10 @@ class ModelCatalogRequest(BaseModel):
     ai_provider: str
     api_key: Optional[str] = None
     base_url: Optional[str] = None
+
+
+class UserPreferenceUpdate(BaseModel):
+    value: dict
 
 
 def _fetch_openai_compatible_models(base_url: str, api_key: str):
@@ -90,6 +96,15 @@ def _classify_qwen_models(model_ids):
         "audio_models": sorted(list(set(audio))),
         "realtime_models": sorted(list(set(realtime))),
     }
+
+
+def _validate_preference_key(key: str) -> str:
+    normalized = (key or "").strip()
+    if not normalized:
+        raise HTTPException(status_code=400, detail="Preference key is required")
+    if len(normalized) > 120:
+        raise HTTPException(status_code=400, detail="Preference key is too long")
+    return normalized
 
 @router.get("/me")
 def get_current_user_profile(current_user: User = Depends(get_current_user)):
@@ -265,3 +280,52 @@ def get_model_catalog(
         "audio_models": [],
         "realtime_models": [],
     }
+
+
+@router.get("/preferences/{key}")
+def get_user_preference(
+    key: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    pref_key = _validate_preference_key(key)
+    row = db.query(UserPreference).filter(
+        UserPreference.user_id == current_user.id,
+        UserPreference.key == pref_key,
+    ).first()
+    if not row:
+        return {"key": pref_key, "value": None}
+
+    try:
+        parsed = json.loads(row.value)
+    except Exception:
+        parsed = None
+    return {"key": pref_key, "value": parsed}
+
+
+@router.put("/preferences/{key}")
+def upsert_user_preference(
+    key: str,
+    payload: UserPreferenceUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    pref_key = _validate_preference_key(key)
+    serialized = json.dumps(payload.value, ensure_ascii=False)
+    row = db.query(UserPreference).filter(
+        UserPreference.user_id == current_user.id,
+        UserPreference.key == pref_key,
+    ).first()
+
+    if row:
+        row.value = serialized
+    else:
+        row = UserPreference(
+            user_id=current_user.id,
+            key=pref_key,
+            value=serialized,
+        )
+        db.add(row)
+
+    db.commit()
+    return {"key": pref_key, "value": payload.value}

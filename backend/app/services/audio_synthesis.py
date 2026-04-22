@@ -3,13 +3,23 @@ import uuid
 import wave
 from pathlib import Path
 from typing import Dict, List, Optional
+from urllib.parse import urlparse
 
 import requests
 from .qwen_realtime import synthesize_text_pcm_via_realtime_ws
 
 
 def _normalize_base_url(base_url: str) -> str:
-    return (base_url or "").rstrip("/")
+    raw = (base_url or "").strip().rstrip("/")
+    if not raw:
+        return raw
+    parsed = urlparse(raw)
+    host = (parsed.netloc or "").lower()
+    path = parsed.path or ""
+    # If user only provides DashScope host, auto-complete OpenAI-compatible path.
+    if "dashscope" in host and (path == "" or path == "/"):
+        return f"{raw}/compatible-mode/v1"
+    return raw
 
 
 def _safe_upload_dir() -> Path:
@@ -86,8 +96,23 @@ def synthesize_qwen_tts_pcm(
             verify_ssl=verify_ssl,
         )
     except Exception as ws_exc:
+        ws_exc_text = str(ws_exc)
+        # Local/dev cert chains are often incomplete; retry once without SSL verification.
+        if verify_ssl and "CERTIFICATE_VERIFY_FAILED" in ws_exc_text:
+            try:
+                return synthesize_text_pcm_via_realtime_ws(
+                    api_key=token,
+                    text=cleaned_text,
+                    voice=voice or "Ethan",
+                    model=ws_model,
+                    base_ws_url=ws_url,
+                    timeout_seconds=25,
+                    verify_ssl=False,
+                )
+            except Exception as ws_exc_retry:
+                ws_exc_text = f"{ws_exc}; retry_without_ssl failed: {ws_exc_retry}"
         detail = response.text[:500] if response is not None else ""
-        raise ValueError(f"Qwen TTS failed: HTTP {response.status_code}: {detail}; realtime fallback failed: {ws_exc}")
+        raise ValueError(f"Qwen TTS failed: HTTP {response.status_code}: {detail}; realtime fallback failed: {ws_exc_text}")
 
 
 def synthesize_role_script_to_wav(

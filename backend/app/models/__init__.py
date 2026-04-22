@@ -9,3 +9,4 @@ from .document import Document
 from .document_visibility import DocumentClassVisibility
 from .assignment import Assignment
 from .speaking_session import SpeakingSession, SpeakingTurn
+from .user_preference import UserPreference

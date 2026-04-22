@@ -210,15 +210,10 @@ export default function ListeningBuilder() {
 
     setSynthesizing(true);
     try {
-      const provider = (localStorage.getItem('ai_provider') || 'qwen').toLowerCase();
       const model = localStorage.getItem('qwen_tts_model') || 'cosyvoice-v3-plus';
       const apiKey = localStorage.getItem('qwen_api_key') || '';
       const baseUrl = localStorage.getItem('qwen_base_url') || 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1';
 
-      if (provider !== 'qwen') {
-        alert('Listening voice synthesis currently supports qwen provider only.');
-        return;
-      }
       if (!apiKey) {
         alert('Please set Qwen API key in Profile Settings first.');
         return;

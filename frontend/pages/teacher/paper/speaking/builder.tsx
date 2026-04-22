@@ -42,24 +42,50 @@ export default function SpeakingBuilder() {
     }
     setSaving(true);
     try {
+      const runtimeProvider = localStorage.getItem('ai_provider') || 'qwen';
+      const runtimeModel = localStorage.getItem('ai_model') || '';
+      const runtimeApiKey =
+        runtimeProvider === 'deepseek'
+          ? localStorage.getItem('deepseek_api_key') || ''
+          : runtimeProvider === 'qwen'
+            ? localStorage.getItem('qwen_api_key') || ''
+            : runtimeProvider === 'openrouter'
+              ? localStorage.getItem('openrouter_api_key') || ''
+              : '';
+      const runtimeBaseUrl =
+        runtimeProvider === 'deepseek'
+          ? localStorage.getItem('deepseek_base_url') || ''
+          : runtimeProvider === 'qwen'
+            ? localStorage.getItem('qwen_base_url') || 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1'
+            : runtimeProvider === 'openrouter'
+              ? localStorage.getItem('openrouter_base_url') || ''
+              : '';
+      const runtimeTtsModel = localStorage.getItem('qwen_tts_model') || 'cosyvoice-v3-plus';
+      const runtimeTtsVoice = localStorage.getItem('qwen_tts_voice') || 'Ethan';
+      const runtimeTtsApiKey = localStorage.getItem('qwen_api_key') || '';
+      const runtimeTtsBaseUrl = localStorage.getItem('qwen_base_url') || 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1';
+      const payload = {
+        title: title.trim(),
+        scenario: scenario.trim(),
+        examiner_persona: examinerPersona.trim(),
+        starter_prompt: starterPrompt.trim(),
+        max_turns: maxTurns,
+        show_answers: showAnswers,
+        runtime_ai: {
+          ai_provider: runtimeProvider,
+          ai_model: runtimeModel,
+          api_key: runtimeApiKey,
+          base_url: runtimeBaseUrl,
+          tts_model: runtimeTtsModel,
+          tts_voice: runtimeTtsVoice,
+          tts_api_key: runtimeTtsApiKey,
+          tts_base_url: runtimeTtsBaseUrl,
+        },
+      };
       if (paperId) {
-        await api.put(`/papers/speaking/${paperId}`, {
-          title: title.trim(),
-          scenario: scenario.trim(),
-          examiner_persona: examinerPersona.trim(),
-          starter_prompt: starterPrompt.trim(),
-          max_turns: maxTurns,
-          show_answers: showAnswers,
-        });
+        await api.put(`/papers/speaking/${paperId}`, payload);
       } else {
-        await api.post('/papers/speaking', {
-          title: title.trim(),
-          scenario: scenario.trim(),
-          examiner_persona: examinerPersona.trim(),
-          starter_prompt: starterPrompt.trim(),
-          max_turns: maxTurns,
-          show_answers: showAnswers,
-        });
+        await api.post('/papers/speaking', payload);
       }
       router.push('/teacher/paper/speaking');
     } catch (err: any) {

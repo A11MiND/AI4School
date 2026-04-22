@@ -1,4 +1,6 @@
 from app.auth import jwt
+from app.models.assignment import Assignment
+from app.models.speaking_session import SpeakingSession
 from app.models.user import User
 
 
@@ -182,3 +184,127 @@ def test_generate_listening_script_success(client, db_session, monkeypatch):
     assert "transcript" in payload and payload["transcript"]
     assert isinstance(payload.get("role_script"), list)
     assert isinstance(payload.get("questions"), list)
+
+
+def test_delete_speaking_paper_with_sessions_and_assignment(client, db_session):
+    teacher = User(username="teacher_delete_speaking", password_hash=jwt.get_password_hash("pass"), role="teacher")
+    student = User(username="student_delete_speaking", password_hash=jwt.get_password_hash("pass"), role="student")
+    db_session.add_all([teacher, student])
+    db_session.commit()
+
+    create_paper = client.post(
+        "/papers/speaking",
+        headers=auth_header(teacher),
+        json={
+            "title": "Speaking Delete Case",
+            "scenario": "Discuss city life.",
+            "starter_prompt": "Tell me about your city.",
+            "max_turns": 6,
+        },
+    )
+    assert create_paper.status_code == 200
+    paper_id = create_paper.json()["paper_id"]
+
+    assignment = Assignment(paper_id=paper_id, student_id=student.id, max_attempts=1)
+    db_session.add(assignment)
+    db_session.commit()
+    db_session.refresh(assignment)
+
+    start_res = client.post(
+        f"/papers/speaking/{paper_id}/sessions",
+        headers=auth_header(student),
+        json={"assignment_id": assignment.id, "max_context_tokens": 100},
+    )
+    assert start_res.status_code == 200
+    session_id = start_res.json()["session_id"]
+
+    turn_res = client.post(
+        f"/papers/speaking/sessions/{session_id}/turns",
+        headers=auth_header(student),
+        json={"role": "student", "text": "Sample response."},
+    )
+    assert turn_res.status_code == 200
+
+    delete_res = client.delete(f"/papers/{paper_id}", headers=auth_header(teacher))
+    assert delete_res.status_code == 200
+    assert delete_res.json()["message"] == "Paper deleted"
+
+    remaining_sessions = db_session.query(SpeakingSession).filter(SpeakingSession.paper_id == paper_id).all()
+    assert remaining_sessions == []
+
+
+def test_generate_writing_prompt_image_success(client, db_session, monkeypatch):
+    teacher = User(username="teacher_image_prompt", password_hash=jwt.get_password_hash("pass"), role="teacher")
+    db_session.add(teacher)
+    db_session.commit()
+
+    class FakeResponse:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {"data": [{"url": "https://cdn.example.com/generated/prompt.png"}]}
+
+    def fake_post(url, headers, json, timeout):
+        assert url.endswith("/images/generations")
+        assert headers["Authorization"].startswith("Bearer ")
+        assert json["model"] == "qwen-image"
+        assert json["prompt"] == "students discussing volunteer work at beach"
+        return FakeResponse()
+
+    monkeypatch.setattr("app.routers.papers.requests.post", fake_post)
+
+    res = client.post(
+        "/papers/writing/generate-image",
+        headers=auth_header(teacher),
+        json={
+            "prompt": "students discussing volunteer work at beach",
+            "api_key": "test-qwen-key",
+            "base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+            "model": "qwen-image",
+        },
+    )
+    assert res.status_code == 200
+    assert res.json()["prompt_asset_url"] == "https://cdn.example.com/generated/prompt.png"
+
+
+def test_complete_speaking_session_blocks_new_turn(client, db_session):
+    teacher = User(username="teacher_complete_speaking", password_hash=jwt.get_password_hash("pass"), role="teacher")
+    student = User(username="student_complete_speaking", password_hash=jwt.get_password_hash("pass"), role="student")
+    db_session.add_all([teacher, student])
+    db_session.commit()
+
+    create_paper = client.post(
+        "/papers/speaking",
+        headers=auth_header(teacher),
+        json={
+            "title": "Speaking Complete Case",
+            "scenario": "Discuss school life.",
+            "starter_prompt": "Please begin.",
+            "max_turns": 6,
+        },
+    )
+    assert create_paper.status_code == 200
+    paper_id = create_paper.json()["paper_id"]
+
+    start_res = client.post(
+        f"/papers/speaking/{paper_id}/sessions",
+        headers=auth_header(student),
+        json={"max_context_tokens": 200},
+    )
+    assert start_res.status_code == 200
+    session_id = start_res.json()["session_id"]
+
+    complete_res = client.post(
+        f"/papers/speaking/sessions/{session_id}/complete",
+        headers=auth_header(student),
+    )
+    assert complete_res.status_code == 200
+    assert complete_res.json()["status"] == "completed"
+
+    turn_res = client.post(
+        f"/papers/speaking/sessions/{session_id}/turns",
+        headers=auth_header(student),
+        json={"role": "student", "text": "Can you hear me?"},
+    )
+    assert turn_res.status_code == 400

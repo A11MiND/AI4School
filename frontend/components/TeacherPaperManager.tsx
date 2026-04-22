@@ -123,8 +123,9 @@ export default function TeacherPaperManager({
             try {
                 await api.delete(`/papers/${id}`);
                 loadPapers();
-            } catch (e) {
+            } catch (e: any) {
                 console.error('Failed to delete', e);
+                alert(e?.response?.data?.detail || 'Failed to delete paper');
             }
         }
     };

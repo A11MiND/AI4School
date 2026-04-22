@@ -1,7 +1,7 @@
 import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
 import api from '../../../../utils/api';
-import { Headphones, Volume2, VolumeX } from 'lucide-react';
+import { Headphones, Clock, ArrowLeft } from 'lucide-react';
 
 type Question = {
   id: number;
@@ -18,7 +18,8 @@ export default function StudentListeningPaper() {
   const [paper, setPaper] = useState<any>(null);
   const [answers, setAnswers] = useState<Record<number, string>>({});
   const [submitting, setSubmitting] = useState(false);
-  const [scriptPlaying, setScriptPlaying] = useState(false);
+  const [timeLeft, setTimeLeft] = useState<number | null>(null);
+  const [needsFullscreen, setNeedsFullscreen] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -27,12 +28,63 @@ export default function StudentListeningPaper() {
         const query = assignmentId ? `?assignment_id=${assignmentId}` : '';
         const res = await api.get(`/papers/${id}${query}`);
         setPaper(res.data);
+        const antiCheat = res.data?.writing_config?.anti_cheat || {};
+        const requireFullscreen = antiCheat?.require_fullscreen ?? true;
+        if (requireFullscreen) {
+          setNeedsFullscreen(!document.fullscreenElement);
+        } else {
+          setNeedsFullscreen(false);
+        }
+        if (res.data?.assignment?.duration_minutes) {
+          setTimeLeft(Number(res.data.assignment.duration_minutes) * 60);
+        }
       } catch (err) {
         console.error(err);
       }
     };
     load();
   }, [id, assignmentId]);
+
+  useEffect(() => {
+    if (!paper) return;
+    const antiCheat = paper?.writing_config?.anti_cheat || {};
+    if (!(antiCheat?.require_fullscreen ?? true)) return;
+    const handleFullscreenChange = () => setNeedsFullscreen(!document.fullscreenElement);
+    setNeedsFullscreen(!document.fullscreenElement);
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
+  }, [paper]);
+
+  useEffect(() => {
+    if (timeLeft === null || timeLeft <= 0) return;
+    const timer = window.setInterval(() => {
+      setTimeLeft((prev) => {
+        if (prev === null) return prev;
+        if (prev <= 1) {
+          window.clearInterval(timer);
+          submit();
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [timeLeft, paper]);
+
+  const formatTime = (sec: number) => {
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    return `${m}:${s.toString().padStart(2, '0')}`;
+  };
+
+  const enterFullscreen = async () => {
+    try {
+      await document.documentElement.requestFullscreen();
+      setNeedsFullscreen(false);
+    } catch {
+      alert('Unable to enter fullscreen on this browser.');
+    }
+  };
 
   const submit = async () => {
     if (!id || !paper) return;
@@ -63,61 +115,32 @@ export default function StudentListeningPaper() {
   if (!paper) return <div className="p-8 text-center text-gray-500">Loading listening paper...</div>;
 
   const audioUrl = paper?.writing_config?.audio_url as string | undefined;
-  const roleScript = Array.isArray(paper?.writing_config?.role_script) ? paper.writing_config.role_script : [];
   const resolvedAudioUrl = audioUrl
     ? (/^https?:\/\//.test(audioUrl)
         ? audioUrl
         : `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}${audioUrl}`)
     : undefined;
 
-  const stopScriptPlayback = () => {
-    if (typeof window === 'undefined') return;
-    if ((window as any).speechSynthesis) {
-      (window as any).speechSynthesis.cancel();
-    }
-    setScriptPlaying(false);
-  };
-
-  const playScript = () => {
-    if (typeof window === 'undefined') return;
-    const synthesis = (window as any).speechSynthesis;
-    if (!synthesis || roleScript.length === 0) {
-      alert('No script audio is available');
-      return;
-    }
-
-    synthesis.cancel();
-    setScriptPlaying(true);
-
-    let idx = 0;
-    const speakNext = () => {
-      if (idx >= roleScript.length) {
-        setScriptPlaying(false);
-        return;
-      }
-      const item = roleScript[idx];
-      const utterance = new SpeechSynthesisUtterance(String(item?.text || ''));
-      utterance.lang = 'en-US';
-      utterance.rate = 0.98;
-      utterance.onend = () => {
-        idx += 1;
-        speakNext();
-      };
-      utterance.onerror = () => {
-        idx += 1;
-        speakNext();
-      };
-      synthesis.speak(utterance);
-    };
-
-    speakNext();
-  };
-
   return (
-    <div className="max-w-4xl mx-auto p-6 space-y-6">
-      <header className="bg-white p-5 rounded-xl border border-gray-100 shadow-sm">
-        <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2"><Headphones size={24} /> {paper.title}</h1>
-        <p className="text-gray-500 mt-1">Listen to the audio and answer the questions below.</p>
+    <div className="max-w-5xl mx-auto p-6 space-y-6">
+      {needsFullscreen && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-6">
+          <div className="bg-white rounded-xl p-6 max-w-md text-center">
+            <h2 className="text-lg font-semibold text-slate-800">Exam Mode: Fullscreen Required</h2>
+            <p className="text-sm text-slate-500 mt-2">This listening paper requires fullscreen mode.</p>
+            <button onClick={enterFullscreen} className="mt-4 px-4 py-2 bg-indigo-600 text-white rounded-lg">Enter Fullscreen</button>
+          </div>
+        </div>
+      )}
+
+      <header className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm flex items-center justify-between">
+        <button type="button" onClick={() => router.back()} className="inline-flex items-center gap-2 text-slate-500 hover:text-slate-700">
+          <ArrowLeft size={18} /> Exit
+        </button>
+        <h1 className="text-xl md:text-2xl font-bold text-gray-900 flex items-center gap-2"><Headphones size={24} /> {paper.title}</h1>
+        <div className="px-3 py-1.5 rounded-lg text-sm font-semibold flex items-center gap-2 bg-sky-50 text-sky-700">
+          <Clock size={16} /> {formatTime(Math.max(0, timeLeft ?? 0))}
+        </div>
       </header>
 
       {(audioUrl || paper.article_content) && (
@@ -127,25 +150,7 @@ export default function StudentListeningPaper() {
               <source src={resolvedAudioUrl} />
             </audio>
           ) : (
-            <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-3">No audio URL provided. Using transcript mode.</p>
-          )}
-
-          {roleScript.length > 0 && (
-            <div className="flex gap-2">
-              <button onClick={playScript} disabled={scriptPlaying} className="px-4 py-2 bg-sky-600 text-white rounded-lg hover:bg-sky-700 disabled:opacity-60 inline-flex items-center gap-2">
-                <Volume2 size={16} /> {scriptPlaying ? 'Playing...' : 'Play AI Voice Script'}
-              </button>
-              <button onClick={stopScriptPlayback} className="px-4 py-2 bg-slate-200 text-slate-700 rounded-lg hover:bg-slate-300 inline-flex items-center gap-2">
-                <VolumeX size={16} /> Stop
-              </button>
-            </div>
-          )}
-
-          {paper.article_content && (
-            <details className="border border-slate-200 rounded-lg p-3 bg-slate-50">
-              <summary className="cursor-pointer text-sm font-medium text-slate-700">Show transcript</summary>
-              <pre className="mt-2 whitespace-pre-wrap text-sm text-slate-700">{paper.article_content}</pre>
-            </details>
+            <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-3">No audio URL provided for this paper.</p>
           )}
         </section>
       )}
