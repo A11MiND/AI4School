@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, B
 from sqlalchemy.orm import Session
 from typing import Optional
 from pydantic import BaseModel
+import requests
 from ..database import get_db
 from ..models.user import User
 from ..auth.jwt import get_current_user, get_password_hash
@@ -28,6 +29,67 @@ class TestAIConnectionRequest(BaseModel):
     ai_model: Optional[str] = None
     api_key: Optional[str] = None
     base_url: Optional[str] = None
+
+
+class ModelCatalogRequest(BaseModel):
+    ai_provider: str
+    api_key: Optional[str] = None
+    base_url: Optional[str] = None
+
+
+def _fetch_openai_compatible_models(base_url: str, api_key: str):
+    root = (base_url or "").rstrip("/")
+    if not root:
+        return []
+    token = (api_key or "").strip()
+    if not token:
+        return []
+
+    try:
+        res = requests.get(
+            f"{root}/models",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=15,
+        )
+        if res.status_code >= 400:
+            return []
+        payload = res.json() if res.content else {}
+        rows = payload.get("data") if isinstance(payload, dict) else []
+        out = []
+        for item in rows or []:
+            model_id = str((item or {}).get("id") or "").strip()
+            if model_id:
+                out.append(model_id)
+        return sorted(list(set(out)))
+    except Exception:
+        return []
+
+
+def _classify_qwen_models(model_ids):
+    chat, audio, realtime = [], [], []
+    for model_id in model_ids:
+        normalized = model_id.lower()
+        if "realtime" in normalized or ("omni" in normalized and "qwen3.5" in normalized):
+            realtime.append(model_id)
+            continue
+        if any(token in normalized for token in ["cosyvoice", "tts", "asr", "paraformer", "livetranslate", "audio"]):
+            audio.append(model_id)
+            continue
+        chat.append(model_id)
+
+    # Safe defaults if provider API does not expose full list.
+    if not chat:
+        chat = ["qwen-plus", "qwen3-max", "qwen-flash", "qwen-turbo"]
+    if not audio:
+        audio = ["cosyvoice-v3-plus", "cosyvoice-v3-flash", "fun-asr-realtime"]
+    if not realtime:
+        realtime = ["qwen3.5-omni-plus-realtime", "qwen3.5-omni-flash-realtime"]
+
+    return {
+        "chat_models": sorted(list(set(chat))),
+        "audio_models": sorted(list(set(audio))),
+        "realtime_models": sorted(list(set(realtime))),
+    }
 
 @router.get("/me")
 def get_current_user_profile(current_user: User = Depends(get_current_user)):
@@ -142,3 +204,64 @@ def test_ai_connection(
         return {"status": "success", "message": response.strip(), "provider": provider, "model": model}
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Connection failed: {str(e)}")
+
+
+@router.post("/model-catalog")
+def get_model_catalog(
+    req: ModelCatalogRequest,
+    current_user: User = Depends(get_current_user)
+):
+    if current_user.role not in {"teacher", "admin"}:
+        raise HTTPException(status_code=403, detail="Only teachers can fetch model catalog")
+
+    provider = (req.ai_provider or "").strip().lower()
+    if provider not in ALLOWED_AI_PROVIDERS:
+        raise HTTPException(status_code=400, detail="Invalid AI provider")
+
+    if provider == "qwen":
+        base_url = (req.base_url or os.getenv("QWEN_BASE_URL") or "https://dashscope-intl.aliyuncs.com/compatible-mode/v1").strip()
+        api_key = (req.api_key or os.getenv("QWEN_API_KEY") or "").strip()
+        ids = _fetch_openai_compatible_models(base_url, api_key)
+        buckets = _classify_qwen_models(ids)
+        return {
+            "provider": provider,
+            "fetched": len(ids) > 0,
+            **buckets,
+        }
+
+    if provider == "deepseek":
+        base_url = (req.base_url or os.getenv("DEEPSEEK_BASE_URL") or "https://api.deepseek.com/v1").strip()
+        api_key = (req.api_key or os.getenv("DEEPSEEK_API_KEY") or "").strip()
+        ids = _fetch_openai_compatible_models(base_url, api_key)
+        if not ids:
+            ids = ["deepseek-chat"]
+        return {
+            "provider": provider,
+            "fetched": len(ids) > 0,
+            "chat_models": sorted(list(set(ids))),
+            "audio_models": [],
+            "realtime_models": [],
+        }
+
+    if provider == "openrouter":
+        base_url = (req.base_url or os.getenv("OPENROUTER_BASE_URL") or "https://openrouter.ai/api/v1").strip()
+        api_key = (req.api_key or os.getenv("OPENROUTER_API_KEY") or "").strip()
+        ids = _fetch_openai_compatible_models(base_url, api_key)
+        if not ids:
+            ids = ["openrouter/auto", "openai/gpt-audio-mini", "qwen/qwen3-8b"]
+        return {
+            "provider": provider,
+            "fetched": len(ids) > 0,
+            "chat_models": sorted(list(set(ids))),
+            "audio_models": [],
+            "realtime_models": [],
+        }
+
+    # gemini currently uses Vertex model IDs managed by templates.
+    return {
+        "provider": provider,
+        "fetched": False,
+        "chat_models": ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.5-pro"],
+        "audio_models": [],
+        "realtime_models": [],
+    }

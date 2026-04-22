@@ -18,12 +18,22 @@ interface UserProfile {
   ai_model?: string;
 }
 
+interface ModelCatalogResponse {
+  provider: string;
+  fetched: boolean;
+  chat_models: string[];
+  audio_models: string[];
+  realtime_models: string[];
+}
+
 const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role }) => {
   const [user, setUser] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
   const [testMessage, setTestMessage] = useState<string>('');
+  const [catalogLoading, setCatalogLoading] = useState(false);
+  const [catalog, setCatalog] = useState<ModelCatalogResponse | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { notify } = useNotifier();
 
@@ -38,6 +48,9 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role }) => {
     deepseek_base_url: 'https://api.deepseek.com/v1',
     qwen_api_key: '',
     qwen_base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    qwen_tts_model: 'cosyvoice-v3-plus',
+    qwen_realtime_model: 'qwen3.5-omni-plus-realtime',
+    qwen_tts_voice: 'Ethan',
     openrouter_api_key: '',
     openrouter_base_url: 'https://openrouter.ai/api/v1'
   });
@@ -96,6 +109,9 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role }) => {
   const getStoredDeepSeekBase = () => localStorage.getItem('deepseek_base_url') || 'https://api.deepseek.com/v1';
   const getStoredQwenKey = () => localStorage.getItem('qwen_api_key') || '';
   const getStoredQwenBase = () => localStorage.getItem('qwen_base_url') || 'https://dashscope.aliyuncs.com/compatible-mode/v1';
+  const getStoredQwenTtsModel = () => localStorage.getItem('qwen_tts_model') || 'cosyvoice-v3-plus';
+  const getStoredQwenRealtimeModel = () => localStorage.getItem('qwen_realtime_model') || 'qwen3.5-omni-plus-realtime';
+  const getStoredQwenTtsVoice = () => localStorage.getItem('qwen_tts_voice') || 'Ethan';
   const getStoredOpenRouterKey = () => localStorage.getItem('openrouter_api_key') || '';
   const getStoredOpenRouterBase = () => localStorage.getItem('openrouter_base_url') || 'https://openrouter.ai/api/v1';
   const getStoredModel = (provider: string) => {
@@ -104,6 +120,39 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role }) => {
       return stored;
     }
     return modelOptions[provider]?.[0] || '';
+  };
+
+  const fetchModelCatalog = async (provider: string, apiKey?: string, baseUrl?: string) => {
+    const token = getToken();
+    if (!token) return;
+    if (!provider) return;
+
+    setCatalogLoading(true);
+    try {
+      const res = await axios.post(
+        `${API_BASE_URL}/users/model-catalog`,
+        {
+          ai_provider: provider,
+          api_key: apiKey || undefined,
+          base_url: baseUrl || undefined,
+        },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      setCatalog(res.data);
+
+      if (provider === 'qwen') {
+        setFormData(prev => ({
+          ...prev,
+          ai_model: prev.ai_model || (res.data.chat_models?.[0] || 'qwen-plus'),
+          qwen_tts_model: prev.qwen_tts_model || (res.data.audio_models?.[0] || 'cosyvoice-v3-plus'),
+          qwen_realtime_model: prev.qwen_realtime_model || (res.data.realtime_models?.[0] || 'qwen3.5-omni-plus-realtime'),
+        }));
+      }
+    } catch (err) {
+      console.error('Failed to fetch model catalog', err);
+    } finally {
+      setCatalogLoading(false);
+    }
   };
 
   const applyProviderTemplate = (templateId: string) => {
@@ -165,11 +214,38 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role }) => {
       deepseek_base_url: getStoredDeepSeekBase(),
       qwen_api_key: getStoredQwenKey(),
       qwen_base_url: getStoredQwenBase(),
+      qwen_tts_model: getStoredQwenTtsModel(),
+      qwen_realtime_model: getStoredQwenRealtimeModel(),
+      qwen_tts_voice: getStoredQwenTtsVoice(),
       openrouter_api_key: getStoredOpenRouterKey(),
       openrouter_base_url: getStoredOpenRouterBase(),
     }));
     fetchProfile();
   }, [role]);
+
+  useEffect(() => {
+    if (role !== 'teacher') return;
+    const provider = formData.ai_provider;
+    let apiKey = '';
+    let baseUrl = '';
+    if (provider === 'qwen') {
+      apiKey = formData.qwen_api_key;
+      baseUrl = formData.qwen_base_url;
+    } else if (provider === 'deepseek') {
+      apiKey = formData.deepseek_api_key;
+      baseUrl = formData.deepseek_base_url;
+    } else if (provider === 'openrouter') {
+      apiKey = formData.openrouter_api_key;
+      baseUrl = formData.openrouter_base_url;
+    }
+
+    // If key exists, fetch provider model list automatically.
+    if ((provider === 'qwen' || provider === 'deepseek' || provider === 'openrouter') && apiKey.trim()) {
+      fetchModelCatalog(provider, apiKey, baseUrl);
+      return;
+    }
+    fetchModelCatalog(provider, undefined, undefined);
+  }, [role, formData.ai_provider, formData.qwen_api_key, formData.qwen_base_url, formData.deepseek_api_key, formData.deepseek_base_url, formData.openrouter_api_key, formData.openrouter_base_url]);
 
   const handleAvatarClick = () => {
     fileInputRef.current?.click();
@@ -177,7 +253,7 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role }) => {
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file) return;
+    if (!file || !(file instanceof File)) return;
 
     const token = getToken();
     const formData = new FormData();
@@ -231,6 +307,9 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role }) => {
       if (formData.qwen_api_key) {
         localStorage.setItem('qwen_api_key', formData.qwen_api_key);
       }
+      localStorage.setItem('qwen_tts_model', formData.qwen_tts_model);
+      localStorage.setItem('qwen_realtime_model', formData.qwen_realtime_model);
+      localStorage.setItem('qwen_tts_voice', formData.qwen_tts_voice || 'Ethan');
       localStorage.setItem('openrouter_base_url', formData.openrouter_base_url);
       if (formData.openrouter_api_key) {
         localStorage.setItem('openrouter_api_key', formData.openrouter_api_key);
@@ -397,7 +476,7 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role }) => {
                       placeholder="e.g. deepseek-chat"
                     />
                     <datalist id="ai-model-presets">
-                      {modelOptions[formData.ai_provider]?.map(m => (
+                      {(catalog?.chat_models?.length ? catalog.chat_models : modelOptions[formData.ai_provider])?.map(m => (
                         <option key={m} value={m} />
                       ))}
                     </datalist>
@@ -481,6 +560,51 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role }) => {
                         className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
                         placeholder="https://cn-hongkong.dashscope.aliyuncs.com/compatible-mode/v1"
                       />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-2">Qwen Audio Model (TTS/ASR)</label>
+                      <input
+                        type="text"
+                        value={formData.qwen_tts_model}
+                        onChange={e => setFormData({ ...formData, qwen_tts_model: e.target.value })}
+                        list="qwen-audio-model-presets"
+                        className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
+                        placeholder="cosyvoice-v3-plus"
+                      />
+                      <datalist id="qwen-audio-model-presets">
+                        {(catalog?.audio_models || ['cosyvoice-v3-plus', 'cosyvoice-v3-flash', 'fun-asr-realtime']).map(m => (
+                          <option key={m} value={m} />
+                        ))}
+                      </datalist>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-2">Qwen Realtime Model (WS)</label>
+                      <input
+                        type="text"
+                        value={formData.qwen_realtime_model}
+                        onChange={e => setFormData({ ...formData, qwen_realtime_model: e.target.value })}
+                        list="qwen-realtime-model-presets"
+                        className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
+                        placeholder="qwen3.5-omni-plus-realtime"
+                      />
+                      <datalist id="qwen-realtime-model-presets">
+                        {(catalog?.realtime_models || ['qwen3.5-omni-plus-realtime', 'qwen3.5-omni-flash-realtime']).map(m => (
+                          <option key={m} value={m} />
+                        ))}
+                      </datalist>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-2">Qwen Voice</label>
+                      <input
+                        type="text"
+                        value={formData.qwen_tts_voice}
+                        onChange={e => setFormData({ ...formData, qwen_tts_voice: e.target.value })}
+                        className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
+                        placeholder="Ethan"
+                      />
+                    </div>
+                    <div className="md:col-span-2 text-xs text-slate-500">
+                      {catalogLoading ? 'Loading model list...' : 'Chat/Audio/Realtime models can reuse the same Qwen API key.'}
                     </div>
                   </div>
                 )}

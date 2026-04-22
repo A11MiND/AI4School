@@ -200,7 +200,12 @@ describe('Shared components', () => {
 
   it('handles avatar upload error', async () => {
     localStorage.setItem('teacher_token', 'token');
-    mockedAxios.post.mockRejectedValueOnce(new Error('fail'));
+    mockedAxios.post.mockImplementation((url) => {
+      if (String(url).includes('/users/me/avatar')) {
+        return Promise.reject(new Error('fail')) as any;
+      }
+      return Promise.resolve({ data: { provider: 'deepseek', chat_models: ['deepseek-chat'], audio_models: [], realtime_models: [] } } as any) as any;
+    });
 
     const { container } = renderProfileSettings('teacher');
 
@@ -215,16 +220,18 @@ describe('Shared components', () => {
 
   it('ignores avatar change when no file selected', async () => {
     localStorage.setItem('teacher_token', 'token');
-    mockedAxios.post.mockClear();
+    mockedAxios.post.mockReset();
+    mockedAxios.post.mockResolvedValue({ data: { provider: 'deepseek', chat_models: ['deepseek-chat'], audio_models: [], realtime_models: [] } } as any);
 
     const { container } = renderProfileSettings('teacher');
 
     await waitFor(() => expect(screen.getByText('Profile Settings')).toBeInTheDocument());
 
     const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
-    fireEvent.change(fileInput, { target: { files: [] } });
+    fireEvent.change(fileInput, { target: { files: null } });
 
-    expect(mockedAxios.post).not.toHaveBeenCalled();
+    const avatarCalls = mockedAxios.post.mock.calls.filter((call) => String(call[0]).includes('/users/me/avatar'));
+    expect(avatarCalls).toHaveLength(0);
   });
 
   it('renders loading state when no token present', async () => {

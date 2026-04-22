@@ -211,7 +211,7 @@ export default function ListeningBuilder() {
     setSynthesizing(true);
     try {
       const provider = (localStorage.getItem('ai_provider') || 'qwen').toLowerCase();
-      const model = localStorage.getItem('qwen_tts_model') || localStorage.getItem('ai_model') || 'cosyvoice-v3-plus';
+      const model = localStorage.getItem('qwen_tts_model') || 'cosyvoice-v3-plus';
       const apiKey = localStorage.getItem('qwen_api_key') || '';
       const baseUrl = localStorage.getItem('qwen_base_url') || 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1';
 
