@@ -20,6 +20,8 @@ from ..services.writing_grader import grade_writing_response
 from ..services.writing_metrics import compute_writing_metrics, metric_improvement_hints
 from ..services.writing_prompt_generator import generate_writing_prompts
 from ..services.memory_compression import compress_dialogue, estimate_tokens
+from ..services.audio_synthesis import synthesize_role_script_to_wav, synthesize_single_text_to_wav
+from ..services.qwen_realtime import probe_qwen_realtime_ws
 from ..models.assignment import Assignment
 from ..models.student_association import StudentClass
 from ..models.submission import Submission, Answer
@@ -128,6 +130,18 @@ class ListeningScriptGenerateRequest(BaseModel):
     base_url: Optional[str] = None
 
 
+class ListeningAudioSynthesisRequest(BaseModel):
+    transcript: Optional[str] = None
+    role_script: Optional[List[Dict[str, str]]] = None
+    ai_provider: Optional[str] = "qwen"
+    ai_model: Optional[str] = "cosyvoice-v3-plus"
+    api_key: Optional[str] = None
+    base_url: Optional[str] = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+    default_voice: Optional[str] = "Ethan"
+    role_voice_map: Optional[Dict[str, str]] = None
+    sample_rate: Optional[int] = 24000
+
+
 class SpeakingPaperCreate(BaseModel):
     title: str
     scenario: str
@@ -143,6 +157,15 @@ class SpeakingSessionStartRequest(BaseModel):
     max_context_tokens: Optional[int] = 1200
 
 
+class SpeakingRealtimeProbeRequest(BaseModel):
+    api_key: Optional[str] = None
+    model: Optional[str] = "qwen3.5-omni-plus-realtime"
+    ws_url: Optional[str] = "wss://dashscope-intl.aliyuncs.com/api-ws/v1/realtime"
+    voice: Optional[str] = "Ethan"
+    timeout_seconds: Optional[int] = 12
+    verify_ssl: Optional[bool] = True
+
+
 class SpeakingTurnRequest(BaseModel):
     role: str
     text: str
@@ -151,6 +174,8 @@ class SpeakingTurnRequest(BaseModel):
     ai_model: Optional[str] = None
     api_key: Optional[str] = None
     base_url: Optional[str] = None
+    voice: Optional[str] = None
+    tts_model: Optional[str] = None
 
 
 def _has_audio_model_capability(provider: Optional[str], model: Optional[str]) -> bool:
@@ -161,8 +186,34 @@ def _has_audio_model_capability(provider: Optional[str], model: Optional[str]) -
         return False
     return any(
         token in normalized
-        for token in ("asr", "paraformer", "tts", "audio", "livetranslate")
+        for token in (
+            "asr",
+            "paraformer",
+            "tts",
+            "audio",
+            "livetranslate",
+            "cosyvoice",
+            "omni",
+            "realtime",
+        )
     )
+
+
+def _parse_role_script_from_transcript(transcript: Optional[str]) -> List[Dict[str, str]]:
+    content = (transcript or "").strip()
+    if not content:
+        return []
+    parsed: List[Dict[str, str]] = []
+    for line in content.splitlines():
+        row = line.strip()
+        if not row:
+            continue
+        matched = re.match(r"^([A-Za-z][A-Za-z0-9_\-]{0,15})\s*[:|]\s*(.+)$", row)
+        if matched:
+            parsed.append({"role": matched.group(1).strip(), "text": matched.group(2).strip()})
+        else:
+            parsed.append({"role": "A", "text": row})
+    return parsed
 
 # Strict objective types - require exact match
 STRICT_OBJECTIVE_TYPES = {
@@ -558,6 +609,32 @@ def generate_writing_prompt_bundle(
         raise HTTPException(status_code=400, detail=str(exc))
 
 
+@router.post("/speaking/realtime/probe")
+def probe_speaking_realtime(
+    payload: SpeakingRealtimeProbeRequest,
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.role not in {"teacher", "admin"}:
+        raise HTTPException(status_code=403, detail="Only teachers can probe realtime speaking models")
+
+    api_key = (payload.api_key or os.getenv("QWEN_API_KEY") or "").strip()
+    if not api_key:
+        raise HTTPException(status_code=400, detail="QWEN_API_KEY is required")
+
+    try:
+        result = probe_qwen_realtime_ws(
+            api_key=api_key,
+            model=(payload.model or "qwen3.5-omni-plus-realtime").strip(),
+            base_ws_url=(payload.ws_url or "wss://dashscope-intl.aliyuncs.com/api-ws/v1/realtime").strip(),
+            voice=(payload.voice or "Ethan").strip(),
+            timeout_seconds=max(5, min(int(payload.timeout_seconds or 12), 30)),
+            verify_ssl=bool(payload.verify_ssl),
+        )
+        return result
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
 @router.put("/writing/{paper_id}")
 def update_writing_paper(
     paper_id: int,
@@ -842,12 +919,6 @@ def generate_listening_script(
 
     request_provider = payload.ai_provider or current_user.ai_provider
     request_model = payload.ai_model or current_user.ai_model
-    if not _has_audio_model_capability(request_provider, request_model):
-        raise HTTPException(
-            status_code=400,
-            detail="Selected model has no ASR/TTS capability. Listening and speaking are unavailable with this model.",
-        )
-
     provider, model = _resolve_ai_config({
         "ai_provider": request_provider,
         "ai_model": request_model,
@@ -960,6 +1031,51 @@ def generate_listening_script(
             "provider": provider,
             "model": model,
         }
+
+
+@router.post("/listening/synthesize-audio")
+def synthesize_listening_audio(
+    payload: ListeningAudioSynthesisRequest,
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.role not in {"teacher", "admin"}:
+        raise HTTPException(status_code=403, detail="Only teachers can synthesize listening audio")
+
+    provider = (payload.ai_provider or "qwen").strip().lower()
+    if provider != "qwen":
+        raise HTTPException(status_code=400, detail="Only qwen provider is currently supported for TTS synthesis")
+
+    model = (payload.ai_model or "cosyvoice-v3-plus").strip()
+    if not _has_audio_model_capability(provider, model):
+        raise HTTPException(status_code=400, detail="Selected model does not look like an audio-capable Qwen model")
+
+    role_script = payload.role_script or []
+    if not role_script:
+        role_script = _parse_role_script_from_transcript(payload.transcript)
+    if not role_script:
+        raise HTTPException(status_code=400, detail="role_script or transcript is required")
+
+    api_key = (payload.api_key or os.getenv("QWEN_API_KEY") or "").strip()
+    if not api_key:
+        raise HTTPException(status_code=400, detail="QWEN_API_KEY is required")
+
+    base_url = (payload.base_url or os.getenv("QWEN_BASE_URL") or "https://dashscope-intl.aliyuncs.com/compatible-mode/v1").strip()
+    sample_rate = int(payload.sample_rate or 24000)
+    sample_rate = 24000 if sample_rate <= 0 else sample_rate
+
+    try:
+        synthesized = synthesize_role_script_to_wav(
+            role_script=role_script,
+            model=model,
+            default_voice=(payload.default_voice or "Ethan").strip() or "Ethan",
+            role_voice_map=payload.role_voice_map,
+            api_key=api_key,
+            base_url=base_url,
+            sample_rate=sample_rate,
+        )
+        return synthesized
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @router.put("/listening/{paper_id}")
@@ -1163,12 +1279,6 @@ def append_speaking_turn(
 
         request_provider = payload.ai_provider or current_user.ai_provider
         request_model = payload.ai_model or current_user.ai_model
-        if not _has_audio_model_capability(request_provider, request_model):
-            raise HTTPException(
-                status_code=400,
-                detail="Selected model has no ASR/TTS capability. Listening and speaking are unavailable with this model.",
-            )
-
         provider, model = _resolve_ai_config({
             "ai_provider": request_provider,
             "ai_model": request_model,
@@ -1200,11 +1310,25 @@ def append_speaking_turn(
         except Exception:
             examiner_text = "Thanks. Could you tell me more about that?"
 
+        examiner_audio_url = None
+        if (request_provider or "").strip().lower() == "qwen":
+            try:
+                examiner_audio_url = synthesize_single_text_to_wav(
+                    text=examiner_text,
+                    model=(payload.tts_model or os.getenv("QWEN_TTS_MODEL") or "cosyvoice-v3-plus").strip(),
+                    voice=(payload.voice or os.getenv("QWEN_TTS_VOICE") or "Ethan").strip(),
+                    api_key=(payload.api_key or os.getenv("QWEN_API_KEY") or "").strip(),
+                    base_url=(payload.base_url or os.getenv("QWEN_BASE_URL") or "https://dashscope-intl.aliyuncs.com/compatible-mode/v1").strip(),
+                )
+            except Exception:
+                examiner_audio_url = None
+
         examiner_turn = SpeakingTurn(
             session_id=session_id,
             turn_index=next_index + 1,
             speaker_role="examiner",
             text=examiner_text,
+            audio_url=examiner_audio_url,
             token_estimate=estimate_tokens(examiner_text),
         )
         db.add(examiner_turn)

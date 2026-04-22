@@ -14,6 +14,7 @@ export default function ListeningBuilder() {
   const [questionsText, setQuestionsText] = useState('mcq|What did speaker A say?|Hello;Goodbye|A');
   const [generatePrompt, setGeneratePrompt] = useState('Two students planning a weekend volunteer activity in English.');
   const [generating, setGenerating] = useState(false);
+  const [synthesizing, setSynthesizing] = useState(false);
   const [showAnswers, setShowAnswers] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -25,7 +26,10 @@ export default function ListeningBuilder() {
       normalized.includes('paraformer') ||
       normalized.includes('tts') ||
       normalized.includes('audio') ||
-      normalized.includes('livetranslate')
+      normalized.includes('livetranslate') ||
+      normalized.includes('cosyvoice') ||
+      normalized.includes('omni') ||
+      normalized.includes('realtime')
     );
   };
 
@@ -154,10 +158,6 @@ export default function ListeningBuilder() {
               ? localStorage.getItem('openrouter_base_url') || ''
               : '';
 
-      if (!hasAudioModelCapability(provider, model)) {
-        alert('Selected model has no ASR/TTS capability. Listening and speaking are unavailable with this model.');
-        return;
-      }
       if ((provider === 'deepseek' || provider === 'qwen' || provider === 'openrouter') && !apiKey) {
         alert('Please set an API key in Profile Settings for the selected provider.');
         return;
@@ -201,6 +201,55 @@ export default function ListeningBuilder() {
     }
   };
 
+  const handleSynthesizeAudio = async () => {
+    const roleScript = parseRoleScript();
+    if (roleScript.length === 0 && !transcript.trim()) {
+      alert('Please provide role script or transcript before synthesis.');
+      return;
+    }
+
+    setSynthesizing(true);
+    try {
+      const provider = (localStorage.getItem('ai_provider') || 'qwen').toLowerCase();
+      const model = localStorage.getItem('qwen_tts_model') || localStorage.getItem('ai_model') || 'cosyvoice-v3-plus';
+      const apiKey = localStorage.getItem('qwen_api_key') || '';
+      const baseUrl = localStorage.getItem('qwen_base_url') || 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1';
+
+      if (provider !== 'qwen') {
+        alert('Listening voice synthesis currently supports qwen provider only.');
+        return;
+      }
+      if (!apiKey) {
+        alert('Please set Qwen API key in Profile Settings first.');
+        return;
+      }
+      if (!hasAudioModelCapability('qwen', model)) {
+        alert('Please use an audio-capable Qwen model, e.g. cosyvoice-v3-plus / cosyvoice-v3-flash.');
+        return;
+      }
+
+      const res = await api.post('/papers/listening/synthesize-audio', {
+        transcript: transcript.trim() || undefined,
+        role_script: roleScript,
+        ai_provider: 'qwen',
+        ai_model: model,
+        api_key: apiKey,
+        base_url: baseUrl,
+        default_voice: localStorage.getItem('qwen_tts_voice') || 'Ethan',
+      });
+
+      const mergedAudioUrl = res?.data?.audio_url;
+      if (mergedAudioUrl) {
+        setAudioUrl(String(mergedAudioUrl));
+      }
+    } catch (err: any) {
+      console.error(err);
+      alert(err?.response?.data?.detail || 'Failed to synthesize listening audio');
+    } finally {
+      setSynthesizing(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-slate-50 p-6">
       <div className="max-w-5xl mx-auto space-y-6">
@@ -223,9 +272,12 @@ export default function ListeningBuilder() {
               onChange={(e) => setGeneratePrompt(e.target.value)}
               placeholder="Describe scenario, level, topic, tone..."
             />
-            <div className="flex justify-end">
+            <div className="flex justify-end gap-2">
               <button onClick={handleGenerateByAI} disabled={generating} className="px-4 py-2 bg-sky-600 text-white rounded-lg hover:bg-sky-700 disabled:opacity-60">
                 {generating ? 'Generating...' : 'AI Generate Transcript + Script + Questions'}
+              </button>
+              <button onClick={handleSynthesizeAudio} disabled={synthesizing} className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-60">
+                {synthesizing ? 'Synthesizing...' : 'Generate Multi-Voice Audio'}
               </button>
             </div>
           </div>

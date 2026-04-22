@@ -8,6 +8,7 @@ type Turn = {
   turn_index: number;
   speaker_role: string;
   text: string;
+  audio_url?: string | null;
   is_compacted?: boolean;
 };
 
@@ -29,6 +30,7 @@ export default function StudentSpeakingSessionPage() {
   const [interimText, setInterimText] = useState('');
   const [examinerSpeaking, setExaminerSpeaking] = useState(false);
   const [lastSpokenTurnId, setLastSpokenTurnId] = useState<number | null>(null);
+  const [audioPlayer, setAudioPlayer] = useState<HTMLAudioElement | null>(null);
 
   const hasAudioModelCapability = (provider: string, model: string) => {
     if (provider !== 'qwen') return true;
@@ -38,7 +40,10 @@ export default function StudentSpeakingSessionPage() {
       normalized.includes('paraformer') ||
       normalized.includes('tts') ||
       normalized.includes('audio') ||
-      normalized.includes('livetranslate')
+      normalized.includes('livetranslate') ||
+      normalized.includes('cosyvoice') ||
+      normalized.includes('omni') ||
+      normalized.includes('realtime')
     );
   };
 
@@ -61,12 +66,6 @@ export default function StudentSpeakingSessionPage() {
     const startSession = async () => {
       setStarting(true);
       try {
-        const provider = localStorage.getItem('ai_provider') || 'deepseek';
-        const model = localStorage.getItem('ai_model') || '';
-        if (!hasAudioModelCapability(provider, model)) {
-          alert('Selected model has no ASR/TTS capability. Listening and speaking are unavailable with this model.');
-          return;
-        }
         const res = await api.post(`/papers/speaking/${paperId}/sessions`, {
           assignment_id: assignmentId || undefined,
           max_context_tokens: 1200,
@@ -121,14 +120,14 @@ export default function StudentSpeakingSessionPage() {
               ? localStorage.getItem('openrouter_base_url') || ''
               : '';
 
-      if (!hasAudioModelCapability(provider, model)) {
-        alert('Selected model has no ASR/TTS capability. Listening and speaking are unavailable with this model.');
-        return;
-      }
       if ((provider === 'deepseek' || provider === 'qwen' || provider === 'openrouter') && !apiKey) {
         alert('Please set an API key in Profile Settings for the selected provider.');
         return;
       }
+
+      const ttsModel = localStorage.getItem('qwen_tts_model') || 'cosyvoice-v3-plus';
+      const ttsVoice = localStorage.getItem('qwen_tts_voice') || 'Ethan';
+      const effectiveQwenBaseUrl = localStorage.getItem('qwen_base_url') || 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1';
 
       await api.post(`/papers/speaking/sessions/${sessionId}/turns`, {
         role: 'student',
@@ -136,7 +135,9 @@ export default function StudentSpeakingSessionPage() {
         ai_provider: provider,
         ai_model: model,
         api_key: apiKey || undefined,
-        base_url: baseUrl || undefined,
+        base_url: (provider === 'qwen' ? effectiveQwenBaseUrl : baseUrl) || undefined,
+        tts_model: provider === 'qwen' && hasAudioModelCapability('qwen', ttsModel) ? ttsModel : undefined,
+        voice: provider === 'qwen' ? ttsVoice : undefined,
       });
       setInputText('');
       await fetchSession(sessionId);
@@ -160,9 +161,9 @@ export default function StudentSpeakingSessionPage() {
   }, []);
 
   const stopExaminerSpeech = () => {
-    if (typeof window === 'undefined') return;
-    if ((window as any).speechSynthesis) {
-      (window as any).speechSynthesis.cancel();
+    if (audioPlayer) {
+      audioPlayer.pause();
+      audioPlayer.currentTime = 0;
     }
     setExaminerSpeaking(false);
   };
@@ -223,25 +224,27 @@ export default function StudentSpeakingSessionPage() {
   };
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
     if (!turns.length) return;
 
     const latestExaminerTurn = [...turns].reverse().find((turn) => turn.speaker_role !== 'student');
     if (!latestExaminerTurn) return;
     if (latestExaminerTurn.id === lastSpokenTurnId) return;
 
-    const synthesis = (window as any).speechSynthesis;
-    if (!synthesis) return;
+    const audioUrl = latestExaminerTurn.audio_url || '';
+    if (!audioUrl) {
+      setLastSpokenTurnId(latestExaminerTurn.id);
+      return;
+    }
 
-    const utterance = new SpeechSynthesisUtterance(latestExaminerTurn.text);
-    utterance.lang = 'en-US';
-    utterance.rate = 0.98;
-    utterance.onstart = () => setExaminerSpeaking(true);
-    utterance.onend = () => setExaminerSpeaking(false);
-    utterance.onerror = () => setExaminerSpeaking(false);
-
-    synthesis.cancel();
-    synthesis.speak(utterance);
+    const absoluteAudioUrl = /^https?:\/\//.test(audioUrl)
+      ? audioUrl
+      : `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}${audioUrl}`;
+    const nextAudio = new Audio(absoluteAudioUrl);
+    nextAudio.onplay = () => setExaminerSpeaking(true);
+    nextAudio.onended = () => setExaminerSpeaking(false);
+    nextAudio.onerror = () => setExaminerSpeaking(false);
+    setAudioPlayer(nextAudio);
+    nextAudio.play().catch(() => setExaminerSpeaking(false));
     setLastSpokenTurnId(latestExaminerTurn.id);
   }, [turns, lastSpokenTurnId]);
 
@@ -268,6 +271,9 @@ export default function StudentSpeakingSessionPage() {
                 {turn.is_compacted ? ' (compacted)' : ''}
               </div>
               <div className="text-sm text-slate-800 whitespace-pre-wrap">{turn.text}</div>
+              {turn.audio_url && (
+                <audio className="mt-2 w-full" controls src={/^https?:\/\//.test(turn.audio_url) ? turn.audio_url : `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}${turn.audio_url}`} />
+              )}
             </div>
           ))
         )}

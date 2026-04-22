@@ -64,6 +64,11 @@ export default function StudentListeningPaper() {
 
   const audioUrl = paper?.writing_config?.audio_url as string | undefined;
   const roleScript = Array.isArray(paper?.writing_config?.role_script) ? paper.writing_config.role_script : [];
+  const resolvedAudioUrl = audioUrl
+    ? (/^https?:\/\//.test(audioUrl)
+        ? audioUrl
+        : `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}${audioUrl}`)
+    : undefined;
 
   const stopScriptPlayback = () => {
     if (typeof window === 'undefined') return;
@@ -119,7 +124,7 @@ export default function StudentListeningPaper() {
         <section className="bg-white p-5 rounded-xl border border-gray-100 shadow-sm space-y-4">
           {audioUrl ? (
             <audio controls className="w-full">
-              <source src={audioUrl} />
+              <source src={resolvedAudioUrl} />
             </audio>
           ) : (
             <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-3">No audio URL provided. Using transcript mode.</p>
