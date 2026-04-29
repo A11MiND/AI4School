@@ -40,7 +40,7 @@ function MyApp({ Component, pageProps }: AppProps) {
   }, [router]);
 
   // Exclude Layout for login/register pages or the root landing page
-  const isAuthPage = router.pathname === '/' || router.pathname.includes('/login') || router.pathname.includes('/register');
+  const isAuthPage = router.pathname === '/' || router.pathname.includes('/login') || router.pathname.includes('/register') || router.pathname.startsWith('/sso/');
 
   if (isAuthPage) {
     return (

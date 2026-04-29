@@ -141,35 +141,12 @@ export default function ListeningBuilder() {
     try {
       const provider = localStorage.getItem('ai_provider') || 'deepseek';
       const model = localStorage.getItem('ai_model') || '';
-      const apiKey =
-        provider === 'deepseek'
-          ? localStorage.getItem('deepseek_api_key') || ''
-          : provider === 'qwen'
-            ? localStorage.getItem('qwen_api_key') || ''
-            : provider === 'openrouter'
-              ? localStorage.getItem('openrouter_api_key') || ''
-              : '';
-      const baseUrl =
-        provider === 'deepseek'
-          ? localStorage.getItem('deepseek_base_url') || ''
-          : provider === 'qwen'
-            ? localStorage.getItem('qwen_base_url') || ''
-            : provider === 'openrouter'
-              ? localStorage.getItem('openrouter_base_url') || ''
-              : '';
-
-      if ((provider === 'deepseek' || provider === 'qwen' || provider === 'openrouter') && !apiKey) {
-        alert('Please set an API key in Profile Settings for the selected provider.');
-        return;
-      }
 
       const res = await api.post('/papers/listening/generate-script', {
         prompt,
         question_count: 5,
         ai_provider: provider,
         ai_model: model,
-        api_key: apiKey || undefined,
-        base_url: baseUrl || undefined,
       });
       const data = res.data || {};
       if (data.transcript) {
@@ -211,13 +188,7 @@ export default function ListeningBuilder() {
     setSynthesizing(true);
     try {
       const model = localStorage.getItem('qwen_tts_model') || 'cosyvoice-v3-plus';
-      const apiKey = localStorage.getItem('qwen_api_key') || '';
-      const baseUrl = localStorage.getItem('qwen_base_url') || 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1';
 
-      if (!apiKey) {
-        alert('Please set Qwen API key in Profile Settings first.');
-        return;
-      }
       if (!hasAudioModelCapability('qwen', model)) {
         alert('Please use an audio-capable Qwen model, e.g. cosyvoice-v3-plus / cosyvoice-v3-flash.');
         return;
@@ -228,8 +199,6 @@ export default function ListeningBuilder() {
         role_script: roleScript,
         ai_provider: 'qwen',
         ai_model: model,
-        api_key: apiKey,
-        base_url: baseUrl,
         default_voice: localStorage.getItem('qwen_tts_voice') || 'Ethan',
       });
 

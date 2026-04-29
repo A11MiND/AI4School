@@ -43,11 +43,11 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role }) => {
     password: '',
     confirm_password: '',
     ai_provider: 'deepseek',
-    ai_model: 'deepseek-chat',
+    ai_model: 'deepseek-v4-flash',
     deepseek_api_key: '',
-    deepseek_base_url: 'https://api.deepseek.com/v1',
+    deepseek_base_url: 'https://api.deepseek.com',
     qwen_api_key: '',
-    qwen_base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    qwen_base_url: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
     qwen_tts_model: 'cosyvoice-v3-plus',
     qwen_realtime_model: 'qwen3.5-omni-plus-realtime',
     qwen_tts_voice: 'Ethan',
@@ -60,15 +60,15 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role }) => {
       id: 'deepseek-default',
       label: 'DeepSeek Template',
       provider: 'deepseek',
-      model: 'deepseek-chat',
-      baseUrl: 'https://api.deepseek.com/v1'
+      model: 'deepseek-v4-flash',
+      baseUrl: 'https://api.deepseek.com'
     },
     {
       id: 'qwen-default',
       label: 'Qwen Template',
       provider: 'qwen',
       model: 'qwen-plus',
-      baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1'
+      baseUrl: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1'
     }
   ];
 
@@ -80,7 +80,7 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role }) => {
   ];
 
   const modelOptions: Record<string, string[]> = {
-    deepseek: ['deepseek-chat'],
+    deepseek: ['deepseek-v4-flash', 'deepseek-v4-pro', 'deepseek-chat', 'deepseek-reasoner'],
     qwen: [
       'qwen-plus',
       'qwen3-max',
@@ -106,9 +106,9 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role }) => {
   const getToken = () => localStorage.getItem(role === 'student' ? 'student_token' : 'teacher_token');
   const getStoredProvider = () => localStorage.getItem('ai_provider') || 'deepseek';
   const getStoredDeepSeekKey = () => localStorage.getItem('deepseek_api_key') || '';
-  const getStoredDeepSeekBase = () => localStorage.getItem('deepseek_base_url') || 'https://api.deepseek.com/v1';
+  const getStoredDeepSeekBase = () => localStorage.getItem('deepseek_base_url') || 'https://api.deepseek.com';
   const getStoredQwenKey = () => localStorage.getItem('qwen_api_key') || '';
-  const getStoredQwenBase = () => localStorage.getItem('qwen_base_url') || 'https://dashscope.aliyuncs.com/compatible-mode/v1';
+  const getStoredQwenBase = () => localStorage.getItem('qwen_base_url') || 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1';
   const getStoredQwenTtsModel = () => localStorage.getItem('qwen_tts_model') || 'cosyvoice-v3-plus';
   const getStoredQwenRealtimeModel = () => localStorage.getItem('qwen_realtime_model') || 'qwen3.5-omni-plus-realtime';
   const getStoredQwenTtsVoice = () => localStorage.getItem('qwen_tts_voice') || 'Ethan';
@@ -210,14 +210,14 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role }) => {
       ...prev,
       ai_provider: provider,
       ai_model: model,
-      deepseek_api_key: getStoredDeepSeekKey(),
+      deepseek_api_key: '',
       deepseek_base_url: getStoredDeepSeekBase(),
-      qwen_api_key: getStoredQwenKey(),
+      qwen_api_key: '',
       qwen_base_url: getStoredQwenBase(),
       qwen_tts_model: getStoredQwenTtsModel(),
       qwen_realtime_model: getStoredQwenRealtimeModel(),
       qwen_tts_voice: getStoredQwenTtsVoice(),
-      openrouter_api_key: getStoredOpenRouterKey(),
+      openrouter_api_key: '',
       openrouter_base_url: getStoredOpenRouterBase(),
     }));
     fetchProfile();
@@ -297,23 +297,61 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role }) => {
       await axios.put(`${API_BASE_URL}/users/me`, payload, {
         headers: { Authorization: `Bearer ${token}` }
       });
+      if (role === 'teacher') {
+        try {
+          await axios.put(
+            `${API_BASE_URL}/users/preferences/runtime_ai`,
+            {
+              value: {
+                ai_provider: formData.ai_provider,
+                ai_model: formData.ai_model,
+                deepseek_api_key: formData.deepseek_api_key || '',
+                deepseek_base_url: formData.deepseek_base_url || '',
+                qwen_api_key: formData.qwen_api_key || '',
+                qwen_base_url: formData.qwen_base_url || '',
+                qwen_tts_model: formData.qwen_tts_model || '',
+                qwen_tts_voice: formData.qwen_tts_voice || 'Ethan',
+                openrouter_api_key: formData.openrouter_api_key || '',
+                openrouter_base_url: formData.openrouter_base_url || '',
+                api_key:
+                  formData.ai_provider === 'deepseek'
+                    ? (formData.deepseek_api_key || '')
+                    : formData.ai_provider === 'qwen'
+                      ? (formData.qwen_api_key || '')
+                      : formData.ai_provider === 'openrouter'
+                        ? (formData.openrouter_api_key || '')
+                        : '',
+                base_url:
+                  formData.ai_provider === 'deepseek'
+                    ? (formData.deepseek_base_url || '')
+                    : formData.ai_provider === 'qwen'
+                      ? (formData.qwen_base_url || '')
+                      : formData.ai_provider === 'openrouter'
+                        ? (formData.openrouter_base_url || '')
+                        : '',
+                tts_model: formData.qwen_tts_model || 'qwen3-tts-instruct-flash',
+                tts_api_key: formData.qwen_api_key || '',
+                tts_base_url: formData.qwen_base_url || 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
+                tts_voice: formData.qwen_tts_voice || 'Ethan',
+              },
+            },
+            { headers: { Authorization: `Bearer ${token}` } }
+          );
+        } catch (prefErr) {
+          console.error('Failed to save runtime_ai preference', prefErr);
+        }
+      }
       localStorage.setItem('ai_provider', formData.ai_provider);
       localStorage.setItem('ai_model', formData.ai_model);
       localStorage.setItem('deepseek_base_url', formData.deepseek_base_url);
-      if (formData.deepseek_api_key) {
-        localStorage.setItem('deepseek_api_key', formData.deepseek_api_key);
-      }
       localStorage.setItem('qwen_base_url', formData.qwen_base_url);
-      if (formData.qwen_api_key) {
-        localStorage.setItem('qwen_api_key', formData.qwen_api_key);
-      }
       localStorage.setItem('qwen_tts_model', formData.qwen_tts_model);
       localStorage.setItem('qwen_realtime_model', formData.qwen_realtime_model);
       localStorage.setItem('qwen_tts_voice', formData.qwen_tts_voice || 'Ethan');
       localStorage.setItem('openrouter_base_url', formData.openrouter_base_url);
-      if (formData.openrouter_api_key) {
-        localStorage.setItem('openrouter_api_key', formData.openrouter_api_key);
-      }
+      localStorage.removeItem('deepseek_api_key');
+      localStorage.removeItem('qwen_api_key');
+      localStorage.removeItem('openrouter_api_key');
       notify({ type: 'success', title: 'Profile', message: 'Profile updated successfully!' });
       fetchProfile(); // Refresh data
     } catch (err: any) {
@@ -473,7 +511,7 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role }) => {
                       }}
                       list="ai-model-presets"
                       className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
-                      placeholder="e.g. deepseek-chat"
+                      placeholder="e.g. deepseek-v4-flash"
                     />
                     <datalist id="ai-model-presets">
                       {(catalog?.chat_models?.length ? catalog.chat_models : modelOptions[formData.ai_provider])?.map(m => (
@@ -497,7 +535,7 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role }) => {
                         className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
                         placeholder="sk-..."
                       />
-                      <p className="mt-1 text-xs text-gray-500">Only used for testing and generation on this device; saved in the local browser after update.</p>
+                      <p className="mt-1 text-xs text-gray-500">Optional BYOK fallback. Saved server-side; not stored in the browser after update.</p>
                     </div>
                     <div>
                       <label className="block text-sm font-medium text-slate-700 mb-2">DeepSeek Base URL</label>
@@ -506,7 +544,7 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role }) => {
                         value={formData.deepseek_base_url}
                         onChange={e => setFormData({ ...formData, deepseek_base_url: e.target.value })}
                         className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
-                        placeholder="https://api.deepseek.com/v1"
+                        placeholder="https://api.deepseek.com"
                       />
                     </div>
                   </div>
@@ -523,7 +561,7 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role }) => {
                         className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
                         placeholder="sk-or-v1-..."
                       />
-                      <p className="mt-1 text-xs text-gray-500">Only used for connection testing on this device; saved in the local browser after update.</p>
+                      <p className="mt-1 text-xs text-gray-500">Optional BYOK fallback. Saved server-side; not stored in the browser after update.</p>
                     </div>
                     <div>
                       <label className="block text-sm font-medium text-slate-700 mb-2">OpenRouter Base URL</label>
@@ -549,7 +587,7 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role }) => {
                         className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
                         placeholder="sk-..."
                       />
-                      <p className="mt-1 text-xs text-gray-500">Only used for connection testing on this device; saved in the local browser after update.</p>
+                      <p className="mt-1 text-xs text-gray-500">Optional BYOK fallback. Saved server-side; not stored in the browser after update.</p>
                     </div>
                     <div>
                       <label className="block text-sm font-medium text-slate-700 mb-2">Qwen Base URL</label>
@@ -558,7 +596,7 @@ const ProfileSettings: React.FC<ProfileSettingsProps> = ({ role }) => {
                         value={formData.qwen_base_url}
                         onChange={e => setFormData({ ...formData, qwen_base_url: e.target.value })}
                         className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
-                        placeholder="https://cn-hongkong.dashscope.aliyuncs.com/compatible-mode/v1"
+                        placeholder="https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
                       />
                     </div>
                     <div>

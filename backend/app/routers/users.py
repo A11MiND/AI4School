@@ -106,6 +106,22 @@ def _validate_preference_key(key: str) -> str:
         raise HTTPException(status_code=400, detail="Preference key is too long")
     return normalized
 
+
+def _redact_runtime_ai_preference(pref_key: str, value):
+    if pref_key != "runtime_ai" or not isinstance(value, dict):
+        return value
+    redacted = dict(value)
+    for key in [
+        "api_key",
+        "deepseek_api_key",
+        "qwen_api_key",
+        "openrouter_api_key",
+        "tts_api_key",
+    ]:
+        if redacted.get(key):
+            redacted[key] = "***configured***"
+    return redacted
+
 @router.get("/me")
 def get_current_user_profile(current_user: User = Depends(get_current_user)):
     return {
@@ -245,11 +261,11 @@ def get_model_catalog(
         }
 
     if provider == "deepseek":
-        base_url = (req.base_url or os.getenv("DEEPSEEK_BASE_URL") or "https://api.deepseek.com/v1").strip()
+        base_url = (req.base_url or os.getenv("DEEPSEEK_BASE_URL") or "https://api.deepseek.com").strip()
         api_key = (req.api_key or os.getenv("DEEPSEEK_API_KEY") or "").strip()
         ids = _fetch_openai_compatible_models(base_url, api_key)
         if not ids:
-            ids = ["deepseek-chat"]
+            ids = ["deepseek-v4-flash", "deepseek-v4-pro", "deepseek-chat", "deepseek-reasoner"]
         return {
             "provider": provider,
             "fetched": len(ids) > 0,
@@ -300,7 +316,7 @@ def get_user_preference(
         parsed = json.loads(row.value)
     except Exception:
         parsed = None
-    return {"key": pref_key, "value": parsed}
+    return {"key": pref_key, "value": _redact_runtime_ai_preference(pref_key, parsed)}
 
 
 @router.put("/preferences/{key}")
@@ -328,4 +344,4 @@ def upsert_user_preference(
         db.add(row)
 
     db.commit()
-    return {"key": pref_key, "value": payload.value}
+    return {"key": pref_key, "value": _redact_runtime_ai_preference(pref_key, payload.value)}
