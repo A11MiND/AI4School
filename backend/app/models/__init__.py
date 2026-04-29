@@ -10,3 +10,13 @@ from .document_visibility import DocumentClassVisibility
 from .assignment import Assignment
 from .speaking_session import SpeakingSession, SpeakingTurn
 from .user_preference import UserPreference
+from .control_plane import (
+    AuditLog,
+    GlobalUserMap,
+    LearningEvent,
+    LlmSecret,
+    LlmUsage,
+    School,
+    SchoolMembership,
+    Subscription,
+)

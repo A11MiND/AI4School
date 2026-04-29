@@ -15,7 +15,7 @@ from datetime import timedelta
 from .database import engine, get_db, Base
 from .models import *  # Import all models to ensure they are registered
 from .auth import jwt
-from .routers import auth, papers, classes, analytics, documents, assignments, users
+from .routers import adapter, analytics, assignments, auth, classes, control_plane, documents, papers, users
 
 # Initialize Database Tables
 Base.metadata.create_all(bind=engine)
@@ -55,6 +55,8 @@ app.include_router(assignments.router)
 app.include_router(users.router)
 app.include_router(analytics.router)
 app.include_router(documents.router)
+app.include_router(control_plane.router)
+app.include_router(adapter.router)
 
 
 @app.get("/health")
