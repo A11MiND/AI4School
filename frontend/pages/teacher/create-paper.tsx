@@ -188,28 +188,6 @@ export default function CreatePaper() {
         try {
             const storedProvider = localStorage.getItem('ai_provider') || 'deepseek';
             const storedModel = localStorage.getItem('ai_model') || '';
-            const deepseekApiKey = localStorage.getItem('deepseek_api_key') || '';
-            const deepseekBaseUrl = localStorage.getItem('deepseek_base_url') || 'https://api.deepseek.com/v1';
-            const qwenApiKey = localStorage.getItem('qwen_api_key') || '';
-            const qwenBaseUrl = localStorage.getItem('qwen_base_url') || 'https://dashscope.aliyuncs.com/compatible-mode/v1';
-            const openrouterApiKey = localStorage.getItem('openrouter_api_key') || '';
-            const openrouterBaseUrl = localStorage.getItem('openrouter_base_url') || 'https://openrouter.ai/api/v1';
-
-            const requestApiKey = storedProvider === 'deepseek'
-                ? (deepseekApiKey || undefined)
-                : storedProvider === 'qwen'
-                    ? (qwenApiKey || undefined)
-                    : storedProvider === 'openrouter'
-                        ? (openrouterApiKey || undefined)
-                        : undefined;
-
-            const requestBaseUrl = storedProvider === 'deepseek'
-                ? (deepseekBaseUrl || undefined)
-                : storedProvider === 'qwen'
-                    ? (qwenBaseUrl || undefined)
-                    : storedProvider === 'openrouter'
-                        ? (openrouterBaseUrl || undefined)
-                        : undefined;
 
             const res = await api.post('/papers/generate', {
                 article_content: article,
@@ -223,8 +201,6 @@ export default function CreatePaper() {
                 cognitive_load: cognitiveLoad,
                 ai_provider: storedProvider,
                 ai_model: storedModel,
-                api_key: requestApiKey,
-                base_url: requestBaseUrl,
             });
             // Clean AI data
             const cleanQuestions = res.data.map((q: any) => {

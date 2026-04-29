@@ -44,26 +44,8 @@ export default function SpeakingBuilder() {
     try {
       const runtimeProvider = localStorage.getItem('ai_provider') || 'qwen';
       const runtimeModel = localStorage.getItem('ai_model') || '';
-      const runtimeApiKey =
-        runtimeProvider === 'deepseek'
-          ? localStorage.getItem('deepseek_api_key') || ''
-          : runtimeProvider === 'qwen'
-            ? localStorage.getItem('qwen_api_key') || ''
-            : runtimeProvider === 'openrouter'
-              ? localStorage.getItem('openrouter_api_key') || ''
-              : '';
-      const runtimeBaseUrl =
-        runtimeProvider === 'deepseek'
-          ? localStorage.getItem('deepseek_base_url') || ''
-          : runtimeProvider === 'qwen'
-            ? localStorage.getItem('qwen_base_url') || 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1'
-            : runtimeProvider === 'openrouter'
-              ? localStorage.getItem('openrouter_base_url') || ''
-              : '';
-      const runtimeTtsModel = localStorage.getItem('qwen_tts_model') || 'cosyvoice-v3-plus';
+      const runtimeTtsModel = localStorage.getItem('qwen_tts_model') || 'qwen3-tts-instruct-flash';
       const runtimeTtsVoice = localStorage.getItem('qwen_tts_voice') || 'Ethan';
-      const runtimeTtsApiKey = localStorage.getItem('qwen_api_key') || '';
-      const runtimeTtsBaseUrl = localStorage.getItem('qwen_base_url') || 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1';
       const payload = {
         title: title.trim(),
         scenario: scenario.trim(),
@@ -74,12 +56,8 @@ export default function SpeakingBuilder() {
         runtime_ai: {
           ai_provider: runtimeProvider,
           ai_model: runtimeModel,
-          api_key: runtimeApiKey,
-          base_url: runtimeBaseUrl,
           tts_model: runtimeTtsModel,
           tts_voice: runtimeTtsVoice,
-          tts_api_key: runtimeTtsApiKey,
-          tts_base_url: runtimeTtsBaseUrl,
         },
       };
       if (paperId) {

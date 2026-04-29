@@ -159,22 +159,6 @@ export default function WritingPaperBuilder() {
         try {
             const storedProvider = localStorage.getItem('ai_provider') || 'deepseek';
             const storedModel = localStorage.getItem('ai_model') || '';
-            const runtimeApiKey =
-                storedProvider === 'deepseek'
-                    ? localStorage.getItem('deepseek_api_key') || ''
-                    : storedProvider === 'qwen'
-                        ? localStorage.getItem('qwen_api_key') || ''
-                        : storedProvider === 'openrouter'
-                            ? localStorage.getItem('openrouter_api_key') || ''
-                            : '';
-            const runtimeBaseUrl =
-                storedProvider === 'deepseek'
-                    ? localStorage.getItem('deepseek_base_url') || ''
-                    : storedProvider === 'qwen'
-                        ? localStorage.getItem('qwen_base_url') || ''
-                        : storedProvider === 'openrouter'
-                            ? localStorage.getItem('openrouter_base_url') || ''
-                            : '';
             const payload = {
                 selected_task_mode: selectedTaskMode,
                 source_document_id: selectedDocId,
@@ -182,13 +166,7 @@ export default function WritingPaperBuilder() {
                 custom_requirements: customRequirements,
                 ai_provider: storedProvider,
                 ai_model: storedModel,
-                api_key: runtimeApiKey || undefined,
-                base_url: runtimeBaseUrl || undefined,
             };
-            if ((storedProvider === 'deepseek' || storedProvider === 'qwen' || storedProvider === 'openrouter') && !runtimeApiKey) {
-                alert('Please set an API key in Profile Settings for the selected provider.');
-                return;
-            }
             const res = await api.post('/papers/writing/generate-prompts', payload);
             if (res.data.task1_prompt) {
                 setTask1Prompt(res.data.task1_prompt);
@@ -210,19 +188,11 @@ export default function WritingPaperBuilder() {
             alert('Please enter or generate a Qwen-image prompt first.');
             return;
         }
-        const qwenApiKey = localStorage.getItem('qwen_api_key') || '';
-        const qwenBaseUrl = localStorage.getItem('qwen_base_url') || 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1';
-        if (!qwenApiKey) {
-            alert('Please set Qwen API key in Profile Settings first.');
-            return;
-        }
         setGeneratingImage(true);
         try {
             const res = await api.post('/papers/writing/generate-image', {
                 prompt,
                 model: 'qwen-image',
-                api_key: qwenApiKey,
-                base_url: qwenBaseUrl,
                 size: '1024x1024',
                 n: 1,
             });

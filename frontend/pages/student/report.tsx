@@ -50,6 +50,21 @@ interface StudentReportResponse {
         total: number;
     }>;
     recent: RecentSubmission[];
+    speaking_overview?: {
+        total_sessions: number;
+        completed_sessions: number;
+        completion_rate: number;
+        avg_student_turns: number;
+    };
+    speaking_recent?: Array<{
+        session_id: number;
+        paper_id: number;
+        paper_title: string;
+        status: string;
+        student_turns: number;
+        examiner_turns: number;
+        updated_at: string;
+    }>;
     summary: string;
 }
 
@@ -224,6 +239,28 @@ export default function StudentReport() {
                     </div>
 
                     <div className="mt-6">
+                        <h4 className="font-semibold text-gray-800 mb-3">Speaking Progress</h4>
+                        <div className="grid grid-cols-2 gap-3 text-sm">
+                            <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
+                                <div className="text-gray-500">Total Sessions</div>
+                                <div className="font-semibold text-gray-900">{report?.speaking_overview?.total_sessions ?? 0}</div>
+                            </div>
+                            <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
+                                <div className="text-gray-500">Completion Rate</div>
+                                <div className="font-semibold text-gray-900">{report?.speaking_overview?.completion_rate ?? 0}%</div>
+                            </div>
+                            <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
+                                <div className="text-gray-500">Completed</div>
+                                <div className="font-semibold text-gray-900">{report?.speaking_overview?.completed_sessions ?? 0}</div>
+                            </div>
+                            <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
+                                <div className="text-gray-500">Avg Student Turns</div>
+                                <div className="font-semibold text-gray-900">{report?.speaking_overview?.avg_student_turns ?? 0}</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="mt-6">
                         <h4 className="font-semibold text-gray-800 mb-3">Question Type Accuracy</h4>
                         <div className="space-y-3">
                             {(report?.type_accuracy || []).length > 0 ? (
@@ -244,6 +281,29 @@ export default function StudentReport() {
                                 ))
                             ) : (
                                 <div className="text-sm text-gray-400">No question-type stats yet.</div>
+                            )}
+                        </div>
+                    </div>
+
+                    <div className="mt-6">
+                        <h4 className="font-semibold text-gray-800 mb-3">Recent Speaking Sessions</h4>
+                        <div className="space-y-2 text-sm">
+                            {(report?.speaking_recent || []).length > 0 ? (
+                                report?.speaking_recent?.map(item => (
+                                    <div key={item.session_id} className="rounded-lg border border-gray-100 px-3 py-2">
+                                        <div className="flex items-center justify-between">
+                                            <div className="text-gray-700">{item.paper_title}</div>
+                                            <div className={`font-medium ${item.status === 'completed' ? 'text-emerald-600' : 'text-amber-600'}`}>
+                                                {item.status}
+                                            </div>
+                                        </div>
+                                        <div className="text-xs text-gray-500 mt-1">
+                                            Student turns: {item.student_turns} | Examiner turns: {item.examiner_turns}
+                                        </div>
+                                    </div>
+                                ))
+                            ) : (
+                                <div className="text-sm text-gray-400">No speaking sessions yet.</div>
                             )}
                         </div>
                     </div>

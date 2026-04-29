@@ -125,7 +125,7 @@ def _resolve_ai_config(options: Optional[Dict[str, object]]) -> Tuple[str, str]:
         return provider, resolved_model
     if provider == "gemini":
         return provider, model or (_env("VERTEX_MODEL", "gemini-1.5-pro") or "gemini-1.5-pro")
-    return "deepseek", model or (_env("DEEPSEEK_MODEL", "deepseek-chat") or "deepseek-chat")
+    return "deepseek", model or (_env("DEEPSEEK_MODEL", "deepseek-v4-flash") or "deepseek-v4-flash")
 
 def _get_openai_client(provider: str, api_key: Optional[str] = None, base_url: Optional[str] = None) -> OpenAI:
     if provider == "openrouter":
@@ -144,7 +144,7 @@ def _get_openai_client(provider: str, api_key: Optional[str] = None, base_url: O
     resolved_api_key = (api_key or _env("DEEPSEEK_API_KEY") or "").strip()
     if not resolved_api_key:
         raise ValueError("DEEPSEEK_API_KEY not configured")
-    resolved_base_url = (base_url or _env("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1") or "https://api.deepseek.com/v1").strip()
+    resolved_base_url = (base_url or _env("DEEPSEEK_BASE_URL", "https://api.deepseek.com") or "https://api.deepseek.com").strip()
     return OpenAI(api_key=resolved_api_key, base_url=resolved_base_url)
 
 def _get_vertex_credentials():
@@ -589,4 +589,3 @@ Grade this response based on meaning and content, not exact wording.
     except Exception as e:
         print(f"Error grading answer: {e}")
         return 0.0
-

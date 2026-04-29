@@ -7,6 +7,7 @@ import random
 import hashlib
 import base64
 import requests
+import logging
 from uuid import uuid4
 from sqlalchemy.orm import Session
 from typing import Any, Dict, List, Optional
@@ -29,11 +30,15 @@ from ..models.assignment import Assignment
 from ..models.student_association import StudentClass
 from ..models.submission import Submission, Answer
 from ..models.speaking_session import SpeakingSession, SpeakingTurn
+from ..models.user_preference import UserPreference
+from ..services.llm_access import resolve_llm_access
 
 router = APIRouter(
     prefix="/papers",
     tags=["papers"]
 )
+
+logger = logging.getLogger(__name__)
 
 # Pydantic Models
 class QuestionBase(BaseModel):
@@ -229,6 +234,51 @@ def _parse_role_script_from_transcript(transcript: Optional[str]) -> List[Dict[s
         else:
             parsed.append({"role": "A", "text": row})
     return parsed
+
+
+def _pick_first_nonempty(*values: Optional[str]) -> Optional[str]:
+    for value in values:
+        text = str(value or "").strip()
+        if text:
+            return text
+    return None
+
+
+def _load_user_runtime_ai_preference(db: Session, user_id: Optional[int]) -> Dict[str, Any]:
+    if not user_id:
+        return {}
+    row = db.query(UserPreference).filter(
+        UserPreference.user_id == user_id,
+        UserPreference.key == "runtime_ai",
+    ).first()
+    if not row:
+        return {}
+    try:
+        payload = json.loads(row.value)
+        return payload if isinstance(payload, dict) else {}
+    except Exception:
+        return {}
+
+
+def _build_dynamic_examiner_fallback(student_text: str, scenario: str, turn_index: int) -> str:
+    cleaned = str(student_text or "").strip()
+    lower = cleaned.lower()
+    if any(token in lower for token in ["can you hear me", "hear me", "hello"]):
+        return "Yes, I can hear you clearly. Please introduce yourself and describe one hobby with specific details."
+    if any(token in lower for token in ["repeat", "same sentence"]):
+        return "Understood. Let's continue: tell me about a recent activity you enjoyed and explain why it was meaningful."
+    if len(cleaned.split()) < 4:
+        return "Please answer in full sentences and add at least two details."
+
+    followups = [
+        "Could you give one concrete example?",
+        "Why do you think that is important?",
+        "How did that experience affect you?",
+        "What would you do differently next time?",
+    ]
+    picked = followups[turn_index % len(followups)]
+    topic = (scenario or "the topic").strip()
+    return f"Thanks. Based on {topic}, {picked}"
 
 # Strict objective types - require exact match
 STRICT_OBJECTIVE_TYPES = {
@@ -448,9 +498,24 @@ def _aggregate_submission_score(answer_scores: List[Optional[float]]) -> float:
     return max(0.0, min(100.0, mean_value * 100.0))
 
 @router.post("/generate")
-def generate_questions(request: GenerateRequest, current_user: User = Depends(get_current_user)):
+def generate_questions(
+    request: GenerateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     if current_user.role != "teacher" and current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Only teachers can generate papers")
+
+    llm_access = resolve_llm_access(
+        db,
+        teacher_id=current_user.id,
+        feature="reading.generate",
+        provider=request.ai_provider or current_user.ai_provider,
+        model=request.ai_model or current_user.ai_model,
+        estimated_usage=1,
+    )
+    if not llm_access.allowed and not request.api_key:
+        raise HTTPException(status_code=402, detail=llm_access.deny_reason or "AI access is not available")
     
     options = {
         "difficulty": request.difficulty,
@@ -461,10 +526,10 @@ def generate_questions(request: GenerateRequest, current_user: User = Depends(ge
         "text_type": request.text_type,
         "register": request.text_register,
         "cognitive_load": request.cognitive_load,
-        "ai_provider": request.ai_provider,
-        "ai_model": request.ai_model,
-        "api_key": request.api_key,
-        "base_url": request.base_url,
+        "ai_provider": llm_access.provider if llm_access.allowed else request.ai_provider,
+        "ai_model": llm_access.model if llm_access.allowed else request.ai_model,
+        "api_key": llm_access.api_key if llm_access.allowed else request.api_key,
+        "base_url": llm_access.base_url if llm_access.allowed else request.base_url,
     }
     try:
         questions_data = generate_dse_questions(request.article_content, options)
@@ -606,11 +671,22 @@ def generate_writing_prompt_bundle(
             raise HTTPException(status_code=404, detail="Document not found")
         source_text = (doc.content or "").strip() or source_text
 
+    llm_access = resolve_llm_access(
+        db,
+        teacher_id=current_user.id,
+        feature="writing.generate",
+        provider=payload.ai_provider or current_user.ai_provider,
+        model=payload.ai_model or current_user.ai_model,
+        estimated_usage=1,
+    )
+    if not llm_access.allowed and not payload.api_key:
+        raise HTTPException(status_code=402, detail=llm_access.deny_reason or "AI access is not available")
+
     options = {
-        "ai_provider": payload.ai_provider,
-        "ai_model": payload.ai_model,
-        "api_key": payload.api_key,
-        "base_url": payload.base_url,
+        "ai_provider": llm_access.provider if llm_access.allowed else payload.ai_provider,
+        "ai_model": llm_access.model if llm_access.allowed else payload.ai_model,
+        "api_key": llm_access.api_key if llm_access.allowed else payload.api_key,
+        "base_url": llm_access.base_url if llm_access.allowed else payload.base_url,
     }
     try:
         generated = generate_writing_prompts(
@@ -627,6 +703,7 @@ def generate_writing_prompt_bundle(
 @router.post("/writing/generate-image")
 def generate_writing_prompt_image(
     payload: WritingImageGenerateRequest,
+    db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     if current_user.role not in {"teacher", "admin"}:
@@ -636,12 +713,21 @@ def generate_writing_prompt_image(
     if not prompt:
         raise HTTPException(status_code=400, detail="Prompt is required")
 
-    api_key = (payload.api_key or os.getenv("QWEN_API_KEY") or "").strip()
+    llm_access = resolve_llm_access(
+        db,
+        teacher_id=current_user.id,
+        feature="writing.image",
+        provider="qwen",
+        model=payload.model or "qwen-image",
+        estimated_usage=1,
+    )
+    api_key = (llm_access.api_key if llm_access.allowed else payload.api_key or os.getenv("QWEN_API_KEY") or "").strip()
     if not api_key:
-        raise HTTPException(status_code=400, detail="QWEN API key is required")
+        raise HTTPException(status_code=402, detail=llm_access.deny_reason or "Qwen image access is not available")
 
     base_url = (
-        payload.base_url
+        llm_access.base_url
+        or payload.base_url
         or os.getenv("QWEN_BASE_URL")
         or "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
     ).strip().rstrip("/")
@@ -997,6 +1083,7 @@ def create_listening_paper(
 @router.post("/listening/generate-script")
 def generate_listening_script(
     payload: ListeningScriptGenerateRequest,
+    db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     if current_user.role not in {"teacher", "admin"}:
@@ -1008,11 +1095,19 @@ def generate_listening_script(
 
     question_count = max(2, min(int(payload.question_count or 5), 10))
 
-    request_provider = payload.ai_provider or current_user.ai_provider
-    request_model = payload.ai_model or current_user.ai_model
+    llm_access = resolve_llm_access(
+        db,
+        teacher_id=current_user.id,
+        feature="listening.generate",
+        provider=payload.ai_provider or current_user.ai_provider,
+        model=payload.ai_model or current_user.ai_model,
+        estimated_usage=1,
+    )
+    if not llm_access.allowed and not payload.api_key:
+        raise HTTPException(status_code=402, detail=llm_access.deny_reason or "AI access is not available")
     provider, model = _resolve_ai_config({
-        "ai_provider": request_provider,
-        "ai_model": request_model,
+        "ai_provider": llm_access.provider if llm_access.allowed else payload.ai_provider,
+        "ai_model": llm_access.model if llm_access.allowed else payload.ai_model,
     })
 
     system_prompt = (
@@ -1062,8 +1157,8 @@ def generate_listening_script(
             user_prompt=user_prompt,
             temperature=0.5,
             max_tokens=1600,
-            api_key=payload.api_key,
-            base_url=payload.base_url,
+            api_key=llm_access.api_key if llm_access.allowed else payload.api_key,
+            base_url=llm_access.base_url if llm_access.allowed else payload.base_url,
         )
         text = (raw or "").strip()
         if "```" in text:
@@ -1127,6 +1222,7 @@ def generate_listening_script(
 @router.post("/listening/synthesize-audio")
 def synthesize_listening_audio(
     payload: ListeningAudioSynthesisRequest,
+    db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     if current_user.role not in {"teacher", "admin"}:
@@ -1146,11 +1242,19 @@ def synthesize_listening_audio(
     if not role_script:
         raise HTTPException(status_code=400, detail="role_script or transcript is required")
 
-    api_key = (payload.api_key or os.getenv("QWEN_API_KEY") or "").strip()
+    llm_access = resolve_llm_access(
+        db,
+        teacher_id=current_user.id,
+        feature="listening.tts",
+        provider="qwen",
+        model=model,
+        estimated_usage=1,
+    )
+    api_key = (llm_access.api_key if llm_access.allowed else payload.api_key or os.getenv("QWEN_API_KEY") or "").strip()
     if not api_key:
-        raise HTTPException(status_code=400, detail="QWEN_API_KEY is required")
+        raise HTTPException(status_code=402, detail=llm_access.deny_reason or "Qwen TTS access is not available")
 
-    base_url = (payload.base_url or os.getenv("QWEN_BASE_URL") or "https://dashscope-intl.aliyuncs.com/compatible-mode/v1").strip()
+    base_url = (llm_access.base_url if llm_access.allowed else payload.base_url or os.getenv("QWEN_BASE_URL") or "https://dashscope-intl.aliyuncs.com/compatible-mode/v1").strip()
     sample_rate = int(payload.sample_rate or 24000)
     sample_rate = 24000 if sample_rate <= 0 else sample_rate
 
@@ -1375,14 +1479,55 @@ def append_speaking_turn(
         paper_owner = None
         if paper and paper.created_by:
             paper_owner = db.query(User).filter(User.id == paper.created_by).first()
-        request_provider = payload.ai_provider or (runtime_ai_cfg.get("ai_provider") if isinstance(runtime_ai_cfg, dict) else None) or (paper_owner.ai_provider if paper_owner else None) or current_user.ai_provider
-        request_model = payload.ai_model or (runtime_ai_cfg.get("ai_model") if isinstance(runtime_ai_cfg, dict) else None) or (paper_owner.ai_model if paper_owner else None) or current_user.ai_model
-        request_api_key = payload.api_key or (runtime_ai_cfg.get("api_key") if isinstance(runtime_ai_cfg, dict) else None)
-        request_base_url = payload.base_url or (runtime_ai_cfg.get("base_url") if isinstance(runtime_ai_cfg, dict) else None)
+        owner_runtime_ai_cfg = _load_user_runtime_ai_preference(db, paper_owner.id if paper_owner else None)
+        request_provider = _pick_first_nonempty(
+            payload.ai_provider,
+            runtime_ai_cfg.get("ai_provider") if isinstance(runtime_ai_cfg, dict) else None,
+            owner_runtime_ai_cfg.get("ai_provider"),
+            paper_owner.ai_provider if paper_owner else None,
+            current_user.ai_provider,
+        )
+        request_model = _pick_first_nonempty(
+            payload.ai_model,
+            runtime_ai_cfg.get("ai_model") if isinstance(runtime_ai_cfg, dict) else None,
+            owner_runtime_ai_cfg.get("ai_model"),
+            paper_owner.ai_model if paper_owner else None,
+            current_user.ai_model,
+        )
+        request_api_key = _pick_first_nonempty(
+            payload.api_key,
+            runtime_ai_cfg.get("api_key") if isinstance(runtime_ai_cfg, dict) else None,
+            owner_runtime_ai_cfg.get("api_key"),
+            owner_runtime_ai_cfg.get("qwen_api_key"),
+            owner_runtime_ai_cfg.get("deepseek_api_key"),
+            owner_runtime_ai_cfg.get("openrouter_api_key"),
+        )
+        request_base_url = _pick_first_nonempty(
+            payload.base_url,
+            runtime_ai_cfg.get("base_url") if isinstance(runtime_ai_cfg, dict) else None,
+            owner_runtime_ai_cfg.get("base_url"),
+            owner_runtime_ai_cfg.get("qwen_base_url"),
+            owner_runtime_ai_cfg.get("deepseek_base_url"),
+            owner_runtime_ai_cfg.get("openrouter_base_url"),
+        )
         provider, model = _resolve_ai_config({
             "ai_provider": request_provider,
             "ai_model": request_model,
         })
+        if paper_owner:
+            llm_access = resolve_llm_access(
+                db,
+                teacher_id=paper_owner.id,
+                feature="speaking.dialogue",
+                provider=provider,
+                model=model,
+                estimated_usage=1,
+            )
+            if llm_access.allowed:
+                provider = llm_access.provider
+                model = llm_access.model
+                request_api_key = request_api_key or llm_access.api_key
+                request_base_url = request_base_url or llm_access.base_url
         system_prompt = (
             "You are an English speaking examiner for students. "
             "Use English only. Keep response concise (1-2 sentences), ask one follow-up question, and maintain scenario role."
@@ -1407,28 +1552,88 @@ def append_speaking_turn(
             ).strip()
             if not examiner_text:
                 examiner_text = "Thanks. Could you tell me more about that?"
-        except Exception:
-            examiner_text = "Thanks. Could you tell me more about that?"
+        except Exception as chat_exc:
+            logger.exception(
+                "Speaking LLM call failed: session=%s provider=%s model=%s has_api_key=%s",
+                session_id,
+                provider,
+                model,
+                bool(request_api_key),
+            )
+            examiner_text = _build_dynamic_examiner_fallback(
+                student_text=payload.text,
+                scenario=scenario or "",
+                turn_index=next_index + 1,
+            )
 
         examiner_audio_url = None
-        runtime_tts_model = runtime_ai_cfg.get("tts_model") if isinstance(runtime_ai_cfg, dict) else None
-        runtime_tts_api_key = runtime_ai_cfg.get("tts_api_key") if isinstance(runtime_ai_cfg, dict) else None
-        runtime_tts_base_url = runtime_ai_cfg.get("tts_base_url") if isinstance(runtime_ai_cfg, dict) else None
-        runtime_tts_voice = runtime_ai_cfg.get("tts_voice") if isinstance(runtime_ai_cfg, dict) else None
-        tts_model = (payload.tts_model or runtime_tts_model or os.getenv("QWEN_TTS_MODEL") or "").strip()
-        tts_api_key = (payload.tts_api_key or runtime_tts_api_key or os.getenv("QWEN_API_KEY") or "").strip()
-        tts_base_url = (payload.tts_base_url or runtime_tts_base_url or os.getenv("QWEN_BASE_URL") or "https://dashscope-intl.aliyuncs.com/compatible-mode/v1").strip()
-        if tts_model and tts_api_key and _has_audio_model_capability("qwen", tts_model):
-            try:
-                examiner_audio_url = synthesize_single_text_to_wav(
-                    text=examiner_text,
-                    model=tts_model,
-                    voice=(payload.voice or runtime_tts_voice or os.getenv("QWEN_TTS_VOICE") or "Ethan").strip(),
-                    api_key=tts_api_key,
-                    base_url=tts_base_url,
-                )
-            except Exception:
-                examiner_audio_url = None
+        runtime_tts_model = _pick_first_nonempty(
+            runtime_ai_cfg.get("tts_model") if isinstance(runtime_ai_cfg, dict) else None,
+            owner_runtime_ai_cfg.get("tts_model"),
+        )
+        runtime_tts_api_key = _pick_first_nonempty(
+            runtime_ai_cfg.get("tts_api_key") if isinstance(runtime_ai_cfg, dict) else None,
+            owner_runtime_ai_cfg.get("tts_api_key"),
+            owner_runtime_ai_cfg.get("qwen_api_key"),
+        )
+        runtime_tts_base_url = _pick_first_nonempty(
+            runtime_ai_cfg.get("tts_base_url") if isinstance(runtime_ai_cfg, dict) else None,
+            owner_runtime_ai_cfg.get("tts_base_url"),
+            owner_runtime_ai_cfg.get("qwen_base_url"),
+        )
+        runtime_tts_voice = _pick_first_nonempty(
+            runtime_ai_cfg.get("tts_voice") if isinstance(runtime_ai_cfg, dict) else None,
+            owner_runtime_ai_cfg.get("tts_voice"),
+        )
+        tts_api_key = _pick_first_nonempty(
+            payload.tts_api_key,
+            runtime_tts_api_key,
+            payload.api_key,
+            request_api_key,
+            os.getenv("QWEN_API_KEY"),
+        )
+        tts_base_url = _pick_first_nonempty(
+            payload.tts_base_url,
+            runtime_tts_base_url,
+            payload.base_url,
+            request_base_url,
+            os.getenv("QWEN_BASE_URL"),
+            "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+        )
+        tts_voice = _pick_first_nonempty(
+            payload.voice,
+            runtime_tts_voice,
+            os.getenv("QWEN_TTS_VOICE"),
+            "Ethan",
+        ) or "Ethan"
+        tts_model_candidates = []
+        for candidate in [
+            payload.tts_model,
+            runtime_tts_model,
+            os.getenv("QWEN_TTS_MODEL"),
+            "qwen3-tts-instruct-flash",
+            "cosyvoice-v3-plus",
+        ]:
+            item = str(candidate or "").strip()
+            if item and item not in tts_model_candidates:
+                tts_model_candidates.append(item)
+
+        if tts_api_key and tts_base_url:
+            for candidate_model in tts_model_candidates:
+                if not _has_audio_model_capability("qwen", candidate_model):
+                    continue
+                try:
+                    examiner_audio_url = synthesize_single_text_to_wav(
+                        text=examiner_text,
+                        model=candidate_model,
+                        voice=tts_voice,
+                        api_key=tts_api_key,
+                        base_url=tts_base_url,
+                    )
+                    if examiner_audio_url:
+                        break
+                except Exception:
+                    examiner_audio_url = None
 
         examiner_turn = SpeakingTurn(
             session_id=session_id,

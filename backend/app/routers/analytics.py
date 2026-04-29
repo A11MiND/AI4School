@@ -5,7 +5,7 @@ from sqlalchemy import func, desc, case, or_
 from datetime import datetime, timezone
 import csv
 import io
-from typing import Dict
+from typing import Dict, Optional, Union
 
 from ..database import get_db
 from ..models.submission import Submission, Answer
@@ -13,6 +13,7 @@ from ..models.question import Question
 from ..models.user import User
 from ..models.paper import Paper
 from ..models.student_association import StudentClass
+from ..models.speaking_session import SpeakingSession, SpeakingTurn
 from ..auth.jwt import get_current_user
 
 router = APIRouter(
@@ -25,7 +26,7 @@ def _require_teacher(current_user: User):
     if current_user.role not in {"teacher", "admin"}:
         raise HTTPException(status_code=403, detail="Not authorized")
 
-def _normalize_paper_type(paper_type: str | None) -> str | None:
+def _normalize_paper_type(paper_type: Optional[str]) -> Optional[str]:
     if not paper_type:
         return None
     normalized = paper_type.strip().lower()
@@ -38,9 +39,9 @@ def _teacher_submission_query(
     db: Session,
     current_user: User,
     class_id: int = None,
-    paper_type: str | None = None,
-    paper_id: int | None = None,
-    student_id: int | None = None,
+    paper_type: Optional[str] = None,
+    paper_id: Optional[int] = None,
+    student_id: Optional[int] = None,
 ):
     query = db.query(Submission).join(Paper, Submission.paper_id == Paper.id)
     return _apply_teacher_filters(
@@ -58,9 +59,9 @@ def _teacher_answer_query(
     db: Session,
     current_user: User,
     class_id: int = None,
-    paper_type: str | None = None,
-    paper_id: int | None = None,
-    student_id: int | None = None,
+    paper_type: Optional[str] = None,
+    paper_id: Optional[int] = None,
+    student_id: Optional[int] = None,
 ):
     query = (
         db.query(Answer)
@@ -83,10 +84,10 @@ def _apply_teacher_filters(
     query,
     db: Session,
     current_user: User,
-    class_id: int | None = None,
-    paper_type: str | None = None,
-    paper_id: int | None = None,
-    student_id: int | None = None,
+    class_id: Optional[int] = None,
+    paper_type: Optional[str] = None,
+    paper_id: Optional[int] = None,
+    student_id: Optional[int] = None,
 ):
     if current_user.role != "admin":
         query = query.filter(Paper.created_by == current_user.id)
@@ -116,10 +117,10 @@ def _build_analytics_csv_payload(
     weak_skills: list[dict],
     student_performance: list[dict],
     weak_areas: dict,
-    class_id: int | None,
-    paper_type: str | None,
-    paper_id: int | None,
-    student_id: int | None,
+    class_id: Optional[int],
+    paper_type: Optional[str],
+    paper_id: Optional[int],
+    student_id: Optional[int],
 ) -> str:
     output = io.StringIO()
     writer = csv.writer(output)
@@ -267,9 +268,9 @@ def _build_simple_text_pdf(lines: list[str]) -> bytes:
 @router.get("/overview")
 async def get_analytics_overview(
     class_id: int = None,
-    paper_type: str | None = None,
-    paper_id: int | None = None,
-    student_id: int | None = None,
+    paper_type: Optional[str] = None,
+    paper_id: Optional[int] = None,
+    student_id: Optional[int] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -300,9 +301,9 @@ async def get_analytics_overview(
 @router.get("/subject-breakdown")
 async def get_subject_breakdown(
     class_id: int = None,
-    paper_type: str | None = None,
-    paper_id: int | None = None,
-    student_id: int | None = None,
+    paper_type: Optional[str] = None,
+    paper_id: Optional[int] = None,
+    student_id: Optional[int] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -382,7 +383,7 @@ async def get_subject_breakdown(
         Submission.score.label("score"),
     )
     productive_submission_rows = productive_base_query.filter(productive_filter).all()
-    productive_aggregates: Dict[str, Dict[str, float | int]] = {}
+    productive_aggregates: Dict[str, Dict[str, Union[float, int]]] = {}
     for row in productive_submission_rows:
         p_type = str(getattr(row, "paper_type", "") or "writing")
         score = getattr(row, "score", None)
@@ -481,9 +482,9 @@ async def get_subject_breakdown(
 async def get_weak_skills(
     limit: int = 5,
     class_id: int = None,
-    paper_type: str | None = None,
-    paper_id: int | None = None,
-    student_id: int | None = None,
+    paper_type: Optional[str] = None,
+    paper_id: Optional[int] = None,
+    student_id: Optional[int] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -523,9 +524,9 @@ async def get_weak_skills(
 @router.get("/student-performance")
 async def get_student_performance(
     class_id: int = None,
-    paper_type: str | None = None,
-    paper_id: int | None = None,
-    student_id: int | None = None,
+    paper_type: Optional[str] = None,
+    paper_id: Optional[int] = None,
+    student_id: Optional[int] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -574,9 +575,9 @@ async def get_student_performance(
 async def get_weak_areas(
     limit: int = 5,
     class_id: int = None,
-    paper_type: str | None = None,
-    paper_id: int | None = None,
-    student_id: int | None = None,
+    paper_type: Optional[str] = None,
+    paper_id: Optional[int] = None,
+    student_id: Optional[int] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -748,7 +749,7 @@ async def get_weak_areas(
 @router.get("/filter-options")
 async def get_analytics_filter_options(
     class_id: int = None,
-    paper_type: str | None = None,
+    paper_type: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -790,9 +791,9 @@ async def get_analytics_filter_options(
 async def export_analytics_csv(
     limit: int = 10,
     class_id: int = None,
-    paper_type: str | None = None,
-    paper_id: int | None = None,
-    student_id: int | None = None,
+    paper_type: Optional[str] = None,
+    paper_id: Optional[int] = None,
+    student_id: Optional[int] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -854,9 +855,9 @@ async def export_analytics_csv(
 async def export_analytics_pdf(
     limit: int = 10,
     class_id: int = None,
-    paper_type: str | None = None,
-    paper_id: int | None = None,
-    student_id: int | None = None,
+    paper_type: Optional[str] = None,
+    paper_id: Optional[int] = None,
+    student_id: Optional[int] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -1057,6 +1058,58 @@ async def get_student_report(
         })
 
     weak_skill_names = [skill for skill, _ in weak_skills]
+
+    speaking_sessions = (
+        db.query(SpeakingSession, Paper)
+        .join(Paper, SpeakingSession.paper_id == Paper.id)
+        .filter(SpeakingSession.student_id == current_user.id)
+        .filter(Paper.paper_type == "speaking")
+        .order_by(SpeakingSession.updated_at.desc())
+        .all()
+    )
+    speaking_session_ids = [sess.id for sess, _ in speaking_sessions]
+    speaking_turn_rows = []
+    if speaking_session_ids:
+        speaking_turn_rows = (
+            db.query(
+                SpeakingTurn.session_id,
+                SpeakingTurn.speaker_role,
+                func.count(SpeakingTurn.id).label("count"),
+            )
+            .filter(SpeakingTurn.session_id.in_(speaking_session_ids))
+            .group_by(SpeakingTurn.session_id, SpeakingTurn.speaker_role)
+            .all()
+        )
+    speaking_turn_map = {}
+    for sid, role, count in speaking_turn_rows:
+        bucket = speaking_turn_map.setdefault(int(sid), {"student": 0, "examiner": 0})
+        key = str(role or "").lower()
+        if key == "student":
+            bucket["student"] = int(count or 0)
+        elif key == "examiner":
+            bucket["examiner"] = int(count or 0)
+
+    speaking_total = len(speaking_sessions)
+    speaking_completed = sum(1 for sess, _ in speaking_sessions if (sess.status or "") == "completed")
+    speaking_avg_student_turns = 0.0
+    if speaking_total:
+        speaking_avg_student_turns = round(
+            sum((speaking_turn_map.get(sess.id, {}).get("student", 0) or 0) for sess, _ in speaking_sessions) / speaking_total,
+            1,
+        )
+    speaking_recent = [
+        {
+            "session_id": sess.id,
+            "paper_id": paper.id,
+            "paper_title": paper.title,
+            "status": sess.status,
+            "student_turns": speaking_turn_map.get(sess.id, {}).get("student", 0),
+            "examiner_turns": speaking_turn_map.get(sess.id, {}).get("examiner", 0),
+            "updated_at": sess.updated_at,
+        }
+        for sess, paper in speaking_sessions[:5]
+    ]
+
     summary_parts = []
     if total_submissions == 0:
         summary_parts.append("No submissions yet. Complete a paper to see your progress.")
@@ -1069,6 +1122,10 @@ async def get_student_report(
             summary_parts.append("Keep practicing—focus on core comprehension and accuracy.")
         if weak_skill_names:
             summary_parts.append(f"Focus next on: {', '.join(weak_skill_names[:2])}.")
+    if speaking_total > 0:
+        summary_parts.append(
+            f"You have completed {speaking_completed}/{speaking_total} speaking sessions with an average of {speaking_avg_student_turns} student turns per session."
+        )
 
     return {
         "overview": {
@@ -1089,5 +1146,12 @@ async def get_student_report(
             }
             for sub, paper in recent
         ],
+        "speaking_overview": {
+            "total_sessions": speaking_total,
+            "completed_sessions": speaking_completed,
+            "completion_rate": round((speaking_completed / speaking_total) * 100, 1) if speaking_total else 0.0,
+            "avg_student_turns": speaking_avg_student_turns,
+        },
+        "speaking_recent": speaking_recent,
         "summary": " ".join(summary_parts)
     }
