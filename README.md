@@ -1,117 +1,121 @@
 <div align="center">
-  <img src="AI4School_icon.png" alt="AI4School Logo" width="150" height="150">
-  <h1>AI4School Project Documentation</h1>
+  <img src="AI4School_icon.png" alt="AI4School logo" width="120" height="120">
+  <h1>AI4School</h1>
 </div>
 
-## Project Overview
-AI4School is a comprehensive educational platform designed to streamline the workflow between teachers and students. It features an automated exam content generation system using AI, a complete class management system, and an interactive student portal for taking exams and reviewing performance.
+![CI](https://github.com/A11MiND/AI4School/actions/workflows/ci.yml/badge.svg)
+![Python](https://img.shields.io/badge/python-FastAPI-009688)
+![Next.js](https://img.shields.io/badge/frontend-Next.js%2014-black)
 
-### API Docs (Auto-generated)
-- **Swagger UI**: `http://localhost:8000/docs`
-- **ReDoc**: `http://localhost:8000/redoc`
-- **OpenAPI JSON**: `http://localhost:8000/openapi.json`
+An AI-assisted exam and classroom management platform: teachers upload course materials, generate exam papers from them with an LLM, assign the papers to classes, and review analytics; students take papers online and get instant feedback on objective questions.
 
-### Tech Stack
-- **Frontend**: Next.js (React), TypeScript, Tailwind CSS, Lucide React (Icons)
-- **Backend**: Python FastAPI, SQLAlchemy, DeepSeek V3 (AI Integration)
-- **Database**: SQLite (Development), extensible to PostgreSQL
-- **Authentication**: JWT (JSON Web Tokens) with Role-Based Access Control (RBAC)
+## Overview
 
----
+AI4School is a two-portal application — a teacher side and a student side — backed by a FastAPI service and a Next.js frontend. Teachers upload reference documents (PDF/DOCX/TXT), generate exam questions from that material through an LLM, review and edit the generated paper, then assign it to a class with a deadline and duration. Students see assigned work on their dashboard, take the paper against a timer, and get immediate scoring on objective (MCQ) items, with results and teacher grading available afterward for open-ended questions. Teachers get class-level and student-level analytics on top of submission data.
 
-## 1. Backend Structure (`/backend`)
-The backend is built with FastAPI and follows a modular MVC-like structure.
+Beyond the core exam workflow, the backend also includes: spoken-response papers backed by real-time audio synthesis, a multi-school "control plane" (schools, subscriptions, per-school/teacher LLM credentials and usage tracking), and an adapter API for single sign-on and user/class sync from an external platform.
 
-### Core Application (`backend/app/`)
-*   **`main.py`**: The entry point of the FastAPI application. It configures CORS, initializes the database tables headers, and includes all routers.
-*   **`database.py`**: Handles database connection via SQLAlchemy. Sets up the `SessionLocal` and `Base` model class.
+## Features
 
-### Models (`backend/app/models/`)
-Defines the database schema (tables).
-*   **`user.py`**: User table for both Teachers and Students (stores hashed passwords, roles).
-*   **`class_model.py`**: Groups students into classes, managed by teachers.
-*   **`document.py`**: Stores raw reference materials (PDFs/Text) uploaded by teachers.
-*   **`paper.py`**: Represents an generated assignment/exam paper.
-*   **`question.py`**: Questions linked to a Paper (MCQ or Open-ended).
-*   **`assignment.py`**: Links a `Paper` to a `Class` with a deadline and duration.
-*   **`submission.py`**: Stores student answers and grading results.
-*   **`student_association.py`**: Many-to-Many link table between Students and Classes.
+- **Document management** — upload and organize PDF/DOCX/TXT reference material per class, with per-document visibility control
+- **AI paper generation** — generate MCQ and open-ended questions from uploaded material via an LLM, then edit before publishing
+- **Class & assignment management** — create classes, manage rosters (including CSV import and invite codes), assign papers with deadlines and durations
+- **Student exam experience** — timed paper-taking UI, instant auto-grading for objective questions, manual grading workflow for open-ended answers
+- **Speaking papers** — oral assessment papers with real-time audio synthesis and turn-by-turn session tracking
+- **Analytics** — class overview, weak-skill breakdown, per-student performance and reports for teachers; progress reports for students
+- **Multi-school control plane** — schools, school memberships, subscriptions, and per-owner LLM credentials/usage quotas, for deployments serving more than one school
+- **Platform adapter / SSO** — endpoints for syncing users and classes from, and launching sessions from, an external platform
+- **Role-based access** — student / teacher / admin roles with JWT authentication
 
-### Routers (`backend/app/routers/`)
-API Endpoints grouped by feature.
-*   **`auth.py`**: Handles User Login (`/token`) and Registration (`/users/`).
-*   **`documents.py`**: CRUD operations for uploading/managing raw course materials.
-*   **`papers.py`**: 
-    - AI Generation endpoint (`/generate`)
-    - Paper creation, retrieval, and deletion.
-    - Creating and grading Submissions (`/submissions`).
-*   **`classes.py`**: Managing classes and adding/removing students.
-*   **`assignments.py`**: Assigning papers to classes and revoking them.
+## Tech stack
 
-### Services (`backend/app/services/`)
-*   **`ai_generator.py`**: Connects to the DeepSeek AI API to generate educational questions based on provided text content.
+- **Backend**: FastAPI, SQLAlchemy, JWT auth (python-jose, passlib/bcrypt), pytest
+- **Frontend**: Next.js 14 (Pages Router), TypeScript, Tailwind CSS, Axios, Recharts, Jest + Testing Library
+- **Database**: PostgreSQL by default (`DATABASE_URL`), SQLite supported for local/dev/test use
+- **AI**: OpenAI-compatible chat completions API (question generation, speaking assessment)
+- **CI**: GitHub Actions — backend `pytest` and frontend `npm test` on every push/PR (`.github/workflows/ci.yml`)
 
-### Root Utilities
-*   **`seed.py`**: A script to populate the database with initial dummy data (admin user, test classes).
-*   **`init_admin.py`**: Helper to create an admin account manually.
+## Project structure
 
----
+```
+backend/
+├── app/
+│   ├── main.py            # FastAPI app, CORS, router registration
+│   ├── database.py         # SQLAlchemy engine/session
+│   ├── auth/                # JWT auth
+│   ├── models/               # SQLAlchemy models (users, classes, papers, submissions, speaking, control plane, ...)
+│   ├── routers/                # API endpoints (auth, papers, classes, assignments, analytics, documents, adapter, control_plane, users)
+│   └── services/                 # ai_generator.py, audio_synthesis.py, llm_access.py
+├── migrations/             # Hand-written SQL migrations
+├── seed.py, init_admin.py    # Seed/admin helper scripts
+└── tests/                  # pytest suite
 
-## 2. Frontend Structure (`/frontend`)
-The frontend is a Next.js application using Pages Router and Tailwind CSS.
+frontend/
+├── pages/
+│   ├── student/             # Student login, dashboard, exam UI, results, report
+│   ├── teacher/               # Teacher login, dashboard, documents, paper builder, classes, grading, analytics
+│   └── sso/launch.tsx           # SSO landing page
+├── components/               # Sidebar, Layout, shared UI
+├── utils/api.ts                # Axios client (student/teacher token switching, 401 interceptor)
+└── __tests__/                 # Jest test suite
 
-### Pages (`frontend/pages/`)
-*   **`_app.tsx`**: Global wrapper. Handles global styles and layout application (except for login pages).
-*   **`index.tsx`**: The landing page giving users the choice to login as Student or Teacher.
+docs/                        # Sphinx documentation (API reference, data models, workflows)
+```
 
-#### Student Portal (`frontend/pages/student/`)
-*   **`login.tsx`**: Student login interface. Saves tokens to `student_token`.
-*   **`home.tsx`**: **Student Dashboard**. Shows "To Do" assignments and recent results.
-*   **`classroom.tsx`**: Static view for class materials (placeholder).
-*   **`paper/[id].tsx`**: **Exam Interface**. The actual "Take Paper" screen with timer and questions.
-*   **`submission/[id].tsx`**: **Result View**. Shows the score, correct answers, and feedback after submission.
-*   **`report.tsx`**: Visual progress report for the student.
+## Installation
 
-#### Teacher Portal (`frontend/pages/teacher/`)
-*   **`login.tsx`**: Teacher login interface. Saves tokens to `teacher_token`.
-*   **`home.tsx`**: **Teacher Dashboard**. Quick links to create papers, view classes, and system status.
-*   **`documents.tsx`**: Upload and manage raw source materials (PDFs/Text).
-*   **`create-paper.tsx`**: **AI Generator**. 
-    - Select source material -> Generate Questions (AI) -> Edit/Review -> Publish.
-    - Also handles "Editing" existing papers.
-*   **`papers.tsx`**: List of all created papers with options to **Assign** to classes or **Edit**.
-*   **`classes.tsx`**: List of classes managed by the teacher.
-*   **`class/[id].tsx`**: **Class Detail View**.
-    - Manage Student Roster (Add/Remove).
-    - View Submission history per student.
-*   **`grading/[id].tsx`**: **Grading Interface**. View a specific student's submission and manually adjust scores.
+### Backend
 
-### Components (`frontend/components/`)
-*   **`Sidebar.tsx`**: The main navigation bar. It is **Context Aware**, showing different links for Students vs Teachers, and handling distinct logout flows.
-*   **`Layout.tsx`**: Wraps the main content with the Sidebar.
+```bash
+cd backend
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env   # set DATABASE_URL, JWT_SECRET_KEY, ALLOWED_ORIGINS, etc.
+```
 
-### Utilities (`frontend/utils/`)
-*   **`api.ts`**: The Axios instance configuration.
-    - **Context-Aware Tokens**: Automatically switches between `student_token` and `teacher_token` based on the URL path (`/student` vs `/teacher`) to allow concurrent sessions.
-    - **Interceptors**: Handles auto-logout on 401 errors.
+Set `DATABASE_URL` to a Postgres instance, or use SQLite for quick local testing (e.g. `sqlite:///./local.db`).
 
----
+```bash
+python seed.py          # optional: seed sample data
+uvicorn app.main:app --reload
+```
 
-## Key Workflows
+The API is served at `http://127.0.0.1:8000`, with interactive docs at `/docs` (Swagger UI) and `/redoc` (ReDoc).
 
-### 1. Paper Creation Flow (Teacher)
-1.  **Upload**: Teacher uploads a text/PDF in `documents.tsx`.
-2.  **Generate**: Clicks "Make Paper", goes to `create-paper.tsx`.
-3.  **AI Process**: `ai_generator.py` calls DeepSeek to create questions.
-4.  **Edit/Publish**: Teacher reviews questions, edits if needed, and publishes to DB.
+### Frontend
 
-### 2. Assignment Flow
-1.  **Assign**: In `papers.tsx`, Teacher clicks "Assign", selects a Class, Deadline, and Duration.
-2.  **Student View**: Student logs in (`home.tsx`) and sees the new assignment in "To Do".
+```bash
+cd frontend
+npm install
+cp .env.example .env.local   # set NEXT_PUBLIC_API_BASE_URL / API_PROXY_TARGET as needed
+npm run dev
+```
 
-### 3. Exam & Grading Flow
-1.  **Take Exam**: Student opens paper (`paper/[id].tsx`). Timer counts down.
-2.  **Submit**: Answers sent to `papers.py` -> `submit_paper`.
-3.  **Auto-Grade**: Backend compares MCQ answers instantly.
-4.  **Review**: Student sees score immediately (`submission/[id].tsx`).
-5.  **Teacher Review**: Teacher sees submission in `class/[id].tsx` and details in `grading/[id].tsx`.
+The frontend runs on `http://localhost:3002` (`next dev -p 3002`).
+
+## Testing
+
+```bash
+# backend
+cd backend && pytest
+
+# frontend
+cd frontend && npm test
+```
+
+Both suites run automatically in CI on push and pull request against `main`.
+
+## Documentation
+
+Sphinx docs live under `docs/` (overview, backend/frontend structure, data models, API endpoints, dev setup). Build them with:
+
+```bash
+cd docs
+pip install sphinx
+sphinx-build -b html . _build
+```
+
+## Status
+
+Actively developed. Core teacher/student exam workflow, analytics, and speaking assessments are implemented; the multi-school control plane and external-platform adapter are present in the codebase for deployments that need to integrate with an outside system, but are not required for standalone use.
